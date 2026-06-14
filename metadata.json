@@ -1,0 +1,6 @@
+{
+  "name": "Prestige Show Builder",
+  "description": "A professional tool for turning TV series concepts into structured show bibles, comic issues, and deterministic performance fragment prompts for AI generation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

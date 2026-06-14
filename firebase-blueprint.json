@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "Show": {
+      "title": "Show",
+      "description": "The complete data for a production, including all seasons, episodes, characters, and settings.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "titleSuggestion": { "type": "string" },
+        "premise": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "lastModified": { "type": "number" },
+        "ownerId": { "type": "string", "description": "The UID of the user who owns this show." }
+      },
+      "required": ["id", "name", "ownerId"]
+    },
+    "ShowSummary": {
+      "title": "ShowSummary",
+      "description": "Lightweight metadata for listing shows in the vault.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "premise": { "type": "string" },
+        "lastModified": { "type": "number" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "name", "ownerId"]
+    },
+    "AssetMetadata": {
+      "title": "AssetMetadata",
+      "description": "Metadata for an uploaded or generated asset (image/video).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "description": "MIME type of the asset." },
+        "size": { "type": "number" },
+        "storagePath": { "type": "string", "description": "Path to the file in Cloud Storage." },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "type", "storagePath", "ownerId"]
+    }
+  },
+  "firestore": {
+    "/shows/{showId}": {
+      "schema": { "$ref": "Show" },
+      "description": "Full show documents."
+    },
+    "/summaries/{showId}": {
+      "schema": { "$ref": "ShowSummary" },
+      "description": "Lightweight summaries for the vault list."
+    },
+    "/assets/{assetId}": {
+      "schema": { "$ref": "AssetMetadata" },
+      "description": "Metadata for assets stored in Cloud Storage."
+    }
+  }
+}

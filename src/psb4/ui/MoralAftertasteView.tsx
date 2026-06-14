@@ -1,0 +1,38 @@
+import React from 'react';
+import { Psb4Artifact } from '../types';
+
+export const MoralAftertasteView: React.FC<{ artifact: Psb4Artifact }> = ({ artifact }) => {
+  const payload = artifact.payload as any;
+  if (!payload) return <div className="p-4 text-xs font-mono text-red-400">Invalid payload.</div>;
+  const items: any[] = payload.pages || [];
+  return (
+    <div className="space-y-5 text-left">
+      <div className="border-b border-white/10 pb-3">
+        <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-amber-500">Phase 12 • Moral Aftertaste</span>
+        <h2 className="text-lg font-bold text-white mt-1">Final Page Plan</h2>
+        {payload.arcEmotionalQuestion && <p className="text-sm text-amber-200/80 mt-2 font-medium italic">&ldquo;{payload.arcEmotionalQuestion}&rdquo;</p>}
+        {payload.summary && <p className="text-xs text-white/60 mt-1 leading-relaxed">{payload.summary}</p>}
+        {payload.intendedAftertaste && <p className="text-xs text-amber-200/70 mt-2 italic">{payload.intendedAftertaste}</p>}
+        {payload.finalAftertaste && <p className="text-xs text-white/60 mt-1 leading-relaxed">{payload.finalAftertaste}</p>}
+      </div>
+      <div className="space-y-3">
+        {items.map((item: any, i: number) => (
+          <div key={i} className="bg-[#0e0e0e] border border-white/8 rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 bg-[#111] border-b border-white/5 flex items-center gap-2">
+              <span className="text-[9px] font-mono text-amber-400/60 w-5">{i+1}</span>
+              <span className="text-xs font-bold text-white/90">{item.page || `Item ${i+1}`}</span>
+            </div>
+            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+              {item.beat && <div><div className="text-[10px] font-mono uppercase tracking-widest text-white/70 mb-0.5">Beat</div><p className="text-xs text-white/80 leading-relaxed">{item.beat}</p></div>}
+              {item.action && <div><div className="text-[10px] font-mono uppercase tracking-widest text-white/70 mb-0.5">Action</div><p className="text-xs text-white/80 leading-relaxed">{item.action}</p></div>}
+              {item.quietPanel && <div><div className="text-[10px] font-mono uppercase tracking-widest text-white/70 mb-0.5">Quiet Panel</div><p className="text-xs text-white/80 leading-relaxed">{item.quietPanel}</p></div>}
+              {item.dialogue && <div><div className="text-[10px] font-mono uppercase tracking-widest text-white/70 mb-0.5">Dialogue</div><p className="text-xs text-white/80 leading-relaxed">{item.dialogue}</p></div>}
+              {item.callback && <div><div className="text-[10px] font-mono uppercase tracking-widest text-white/70 mb-0.5">Callback</div><p className="text-xs text-white/80 leading-relaxed">{item.callback}</p></div>}
+              {item.readerAftertaste && <div><div className="text-[10px] font-mono uppercase tracking-widest text-white/70 mb-0.5">Aftertaste</div><p className="text-xs text-white/80 leading-relaxed">{item.readerAftertaste}</p></div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};

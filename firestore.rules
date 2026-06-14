@@ -1,0 +1,207 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: productions
+    // Document ID: showId
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required)
+    //   - ownerId: string (required, immutable)
+    //   - lastModified: number (required)
+    //
+    // Subcollection: productions/{showId}/logs
+    // Document ID: logId
+    //
+    // Subcollection: productions/{showId}/gallery
+    // Document ID: galleryId
+    //
+    // Subcollection: productions/{showId}/seasons
+    // Document ID: seasonId
+    //
+    // Subcollection: productions/{showId}/characters
+    // Document ID: characterId
+    //
+    // Subcollection: productions/{showId}/settingAnchors
+    // Document ID: settingAnchorId
+    //
+    // Collection: summaries
+    // Document ID: showId
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required)
+    //   - ownerId: string (required, immutable)
+    //   - lastModified: number (required)
+    //
+    // Collection: assets
+    // Document ID: assetId
+    // Fields:
+    //   - id: string (required)
+    //   - type: string (required)
+    //   - storagePath: string (required)
+    //   - ownerId: string (required, immutable)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && (resource == null || request.auth.uid == resource.data.ownerId);
+    }
+
+    function isParentShowOwner(showId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/productions/$(showId)) &&
+        get(/databases/$(database)/documents/productions/$(showId)).data.ownerId == request.auth.uid;
+    }
+
+    function isSubDocOwner() {
+      return isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          (request.auth.token.email == "hinesj@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidShow(data) {
+      return data.id is string && data.id.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.ownerId is string && data.ownerId == request.auth.uid;
+    }
+
+    function isValidSummary(data) {
+      return data.id is string && data.id.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.ownerId is string && data.ownerId == request.auth.uid;
+    }
+
+    function isValidAsset(data) {
+      return data.id is string && data.id.size() > 0 &&
+             data.type is string && data.type.size() > 0 &&
+             data.storagePath is string && data.storagePath.size() > 0 &&
+             data.ownerId is string && data.ownerId == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /productions/{showId} {
+      allow get: if isAuthenticated() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
+      allow list: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid));
+      allow create: if isAuthenticated() && isValidShow(request.resource.data);
+      allow update: if (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid)) && isValidShow(request.resource.data) && areImmutableFieldsUnchanged(['ownerId', 'id']);
+      allow delete: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+
+      match /logs/{logId} {
+        allow get: if isAuthenticated() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
+        allow list: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid));
+        allow create: if isAdmin() || isParentShowOwner(showId) || isSubDocOwner();
+        allow update: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+        allow delete: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+      }
+
+      match /gallery/{galleryId} {
+        allow get: if isAuthenticated() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
+        allow list: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid));
+        allow create: if isAdmin() || isParentShowOwner(showId) || isSubDocOwner();
+        allow update: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+        allow delete: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+      }
+
+      match /seasons/{seasonId} {
+        allow get: if isAuthenticated() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
+        allow list: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid));
+        allow create: if isAdmin() || isParentShowOwner(showId) || isSubDocOwner();
+        allow update: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+        allow delete: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+
+        match /episodes/{episodeId} {
+          allow get: if isAuthenticated() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
+          allow list: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid));
+          allow create: if isAdmin() || isParentShowOwner(showId) || isSubDocOwner();
+          allow update: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+          allow delete: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+        }
+      }
+
+      match /characters/{characterId} {
+        allow get: if isAuthenticated() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
+        allow list: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid));
+        allow create: if isAdmin() || isParentShowOwner(showId) || isSubDocOwner();
+        allow update: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+        allow delete: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+      }
+
+      match /settingAnchors/{settingAnchorId} {
+        allow get: if isAuthenticated() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
+        allow list: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid));
+        allow create: if isAdmin() || isParentShowOwner(showId) || isSubDocOwner();
+        allow update: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+        allow delete: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+      }
+    }
+
+    match /summaries/{showId} {
+      allow get: if isAuthenticated() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
+      allow list: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid));
+      allow create: if isAuthenticated() && isValidSummary(request.resource.data);
+      allow update: if (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid)) && isValidSummary(request.resource.data) && areImmutableFieldsUnchanged(['ownerId', 'id']);
+      allow delete: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+    }
+
+    match /assets/{assetId} {
+      allow get: if isAuthenticated() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
+      allow list: if isAuthenticated() && (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid));
+      allow create: if isAuthenticated() && isValidAsset(request.resource.data);
+      allow update: if (isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid)) && isValidAsset(request.resource.data) && areImmutableFieldsUnchanged(['ownerId', 'id']);
+      allow delete: if isAdmin() || (resource != null && resource.data.ownerId == request.auth.uid);
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isOwner(userId) && request.resource.data.role == 'user';
+      allow update: if (isOwner(userId) && areImmutableFieldsUnchanged(['role'])) || isAdmin();
+    }
+
+    match /psb4/{showId} {
+      allow read, write: if isAuthenticated() && (!exists(/databases/{database}/documents/productions/$(showId)) || get(/databases/{database}/documents/productions/$(showId)).data.ownerId == request.auth.uid || isAdmin());
+
+      match /{allSubcollections=**} {
+        allow read, write: if isAuthenticated() && (!exists(/databases/{database}/documents/productions/$(showId)) || get(/databases/{database}/documents/productions/$(showId)).data.ownerId == request.auth.uid || isAdmin());
+      }
+    }
+  }
+}
