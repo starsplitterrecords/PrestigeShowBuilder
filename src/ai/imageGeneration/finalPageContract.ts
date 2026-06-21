@@ -365,7 +365,109 @@ export function buildFinalPageBeat(
     panelProps: (pb as any).panelProps,
     panels,
   };
+
+  // DA-109: closes the gap between this file's own stated design rule
+  // ("Raw @ids never reach the prompt") and reality — that rule was only
+  // ever enforced for balloon speaker labels. Every other free-text field
+  // is one sweep, at one choke point, rather than patched in N places.
+  sanitizeContractStrings(contract, show, problems);
+
   return { contract, problems };
+}
+
+// ── Handle-leakage sanitization (DA-109) ───────────────────────────────
+//
+// Confirmed in production: a real page had "@brk.Lucia" / "@brk.Arvin"
+// baked directly into every panel's action text by the panel-plan
+// generation pass, while the structured staging and balloon labels a few
+// lines later correctly said "Lucia" / "Arvin". The model was handed a
+// portrait, told to match it to "Lucia," then immediately read an
+// unfamiliar token claiming to be someone else in the very next sentence,
+// before being told later they were the same person. Nothing downstream
+// caught it — sanitizeVisualField only strips quoted dialogue leakage, not
+// handle syntax, and most of these fields had no sanitization at all.
+//
+// Fixed once here, swept over the fully-built contract, rather than
+// threading a fix into every individual field at its point of construction
+// (which is exactly the kind of incremental, easy-to-miss patching that
+// caused this gap in the first place — a new field added later would
+// silently bypass field-by-field fixes, but not this sweep).
+//
+// Deliberately NOT swept: panels[].text[].text — actual balloon/caption
+// content, which must render character-for-character per the lettering
+// spec. That field has its own, narrower protection (cleanLetteringText
+// strips a literal leading "@handle:" prefix) because mangling visible
+// lettering text is worse than leaving a rare leaked token in dialogue,
+// and dialogue content comes from the writing pass, not the panel-plan
+// pass, so it isn't the field this bug actually occurs in.
+//
+// Also deliberately NOT swept: zone, depth, anchor — tightly enum-like
+// structured fields, not free text.
+
+function stripHandleToken(
+  token: string,
+  show: Show,
+  problems: string[],
+  fieldName: string
+): string {
+  const char = resolveCharacter(show, token);
+  if (char) {
+    const name = char.name || char.handle || token.replace(/^@/, '');
+    problems.push(
+      `Warning: Raw handle "${token}" found in "${fieldName}" — replaced with resolved name "${name}".`
+    );
+    return name;
+  }
+  problems.push(
+    `Warning: Unresolvable handle-like token "${token}" found in "${fieldName}" — stripped to avoid leaking raw syntax into the prompt.`
+  );
+  return token.replace(/^@/, '');
+}
+
+function sweepHandleLeakage(
+  value: string | undefined,
+  show: Show,
+  problems: string[],
+  fieldName: string
+): string | undefined {
+  if (!value) return value;
+  if (!/@[\w.]/.test(value)) return value; // fast path: nothing token-shaped present
+  return value.replace(/@[\w.]+/g, (token) => stripHandleToken(token, show, problems, fieldName));
+}
+
+function sanitizeContractStrings(
+  contract: FinalPageBeat,
+  show: Show,
+  problems: string[]
+): void {
+  if (contract.visualDirection) {
+    const vd = contract.visualDirection;
+    vd.lighting = sweepHandleLeakage(vd.lighting, show, problems, 'visualDirection.lighting');
+    vd.mood = sweepHandleLeakage(vd.mood, show, problems, 'visualDirection.mood');
+    vd.emotionalRegister = sweepHandleLeakage(vd.emotionalRegister, show, problems, 'visualDirection.emotionalRegister');
+    vd.environmentalDetail = sweepHandleLeakage(vd.environmentalDetail, show, problems, 'visualDirection.environmentalDetail');
+  }
+
+  for (const prop of contract.panelProps ?? []) {
+    prop.label = sweepHandleLeakage(prop.label, show, problems, 'panelProps.label') || prop.label;
+    prop.description = sweepHandleLeakage(prop.description, show, problems, 'panelProps.description') || prop.description;
+  }
+
+  for (const p of contract.panels) {
+    p.shotType = sweepHandleLeakage(p.shotType, show, problems, `panel ${p.index + 1} shotType`) || p.shotType;
+    p.action = sweepHandleLeakage(p.action, show, problems, `panel ${p.index + 1} action`) || p.action;
+    p.foreground = sweepHandleLeakage(p.foreground, show, problems, `panel ${p.index + 1} foreground`);
+    p.midground = sweepHandleLeakage(p.midground, show, problems, `panel ${p.index + 1} midground`);
+    p.background = sweepHandleLeakage(p.background, show, problems, `panel ${p.index + 1} background`);
+    p.relationalStaging = sweepHandleLeakage(p.relationalStaging, show, problems, `panel ${p.index + 1} relationalStaging`);
+
+    for (const cp of p.characterPositions) {
+      cp.bodyLanguage = sweepHandleLeakage(cp.bodyLanguage, show, problems, `panel ${p.index + 1} characterPositions.bodyLanguage`);
+      cp.facialExpression = sweepHandleLeakage(cp.facialExpression, show, problems, `panel ${p.index + 1} characterPositions.facialExpression`);
+      cp.inResponseTo = sweepHandleLeakage(cp.inResponseTo, show, problems, `panel ${p.index + 1} characterPositions.inResponseTo`);
+      cp.facing = sweepHandleLeakage(cp.facing, show, problems, `panel ${p.index + 1} characterPositions.facing`);
+    }
+  }
 }
 
 function sanitizeVisualField(
