@@ -4,6 +4,7 @@ import { ProductionPage, ImageVersion, PageBeat } from '../../types/production';
 import { CinematicBeat } from '../../types/models';
 import { Show } from '../../types/show';
 import { generateUID, resolveCanonicalCharacters } from '../../domainUtils';
+import { buildStoredImageMetadata } from '../../ai/imageGeneration/storedImageMetadata';
 import {
   writeImageVersion,
   updateProductionPage,
@@ -122,7 +123,12 @@ const getPageBeatScriptEntries = (pb?: PageBeat | null) => {
 export function useProductionPageActions(
   page: ProductionPage | null,
   pageBeat: PageBeat | null,
-  settingAnchorId?: string
+  settingAnchorId?: string,
+  // DA-102: defaults off. Previously generateImage/rerollImage/refineImage
+  // all called loadPriorPageRefs unconditionally, attaching up to 3
+  // adjacent same-scene pages regardless of any UI toggle. When true, only
+  // the single previous page is attached — not the prior+following window.
+  continuity: boolean = false
 ) {
   const { state, dispatch } = useStore();
   const { currentShow } = state;
@@ -209,6 +215,8 @@ export function useProductionPageActions(
         'Write 2-3 sentences of concrete comic panel direction.',
         'Focus on: composition, camera angle, character positions,',
         'lighting, key visual elements. Be specific and drawable.',
+        '',
+        'DIALOGUE LEAK PREVENTION: Dialogue, captions, signs, labels, and sound effects must only appear in explicit text-render fields. Do not copy dialogue or readable text into ACTION, FOREGROUND, MIDGROUND, BACKGROUND, STAGING, visual direction, camera direction, environmental detail, or prop descriptions. Visual fields must describe only what is seen, not text to render.',
         '',
         `Beat description: ${activeBeat.description}`,
         chars ? `Characters:\n${chars}` : '',
@@ -362,9 +370,10 @@ export function useProductionPageActions(
       }
 
       // Load other visual references — locked scene refs, prior page continuity, and setting anchor.
+      // DA-102: continuity defaults off; when on, previous page only.
       const [lockedRefs, priorRefs, settingRef] = await Promise.all([
         loadPageBeatLockedRefs(resolvedBeat, settingAnchorId, currentShow),
-        loadPriorPageRefs(page, currentShow),
+        continuity ? loadPriorPageRefs(page, currentShow, 1, 0) : Promise.resolve([]),
         loadSettingAnchorRef(settingAnchorId, currentShow),
       ]);
 
@@ -386,7 +395,7 @@ export function useProductionPageActions(
         label: r.label,
         assetId: r.assetId
       }));
-      const settingPrefix = (!settingRef.imageRef && settingRef.settingNote)
+      const settingPrefix = settingRef.settingNote
         ? settingRef.settingNote + '\n'
         : '';
       const { contract, problems } = buildFinalPageBeat(
@@ -425,7 +434,7 @@ export function useProductionPageActions(
         variantType: 'final',
         status: 'draft',
         createdAt: Date.now(),
-        metadata: result?.metadata,
+        metadata: buildStoredImageMetadata(result),
       };
       await writeImageVersion(currentShow.id, version);
       await updateProductionPage(currentShow.id, page.uid, {
@@ -596,9 +605,10 @@ export function useProductionPageActions(
       }
 
       // Load other visual references — locked scene refs, prior page continuity, and setting anchor.
+      // DA-102: continuity defaults off; when on, previous page only.
       const [lockedRefs, priorRefs, settingRef] = await Promise.all([
         loadPageBeatLockedRefs(resolvedBeat, settingAnchorId, currentShow),
-        loadPriorPageRefs(page, currentShow),
+        continuity ? loadPriorPageRefs(page, currentShow, 1, 0) : Promise.resolve([]),
         loadSettingAnchorRef(settingAnchorId, currentShow),
       ]);
 
@@ -620,7 +630,7 @@ export function useProductionPageActions(
         label: r.label,
         assetId: r.assetId
       }));
-      const settingPrefix = (!settingRef.imageRef && settingRef.settingNote)
+      const settingPrefix = settingRef.settingNote
         ? settingRef.settingNote + '\n'
         : '';
       const { contract, problems } = buildFinalPageBeat(
@@ -659,7 +669,7 @@ export function useProductionPageActions(
         variantType: 'final',
         status: 'draft',
         createdAt: Date.now(),
-        metadata: result?.metadata,
+        metadata: buildStoredImageMetadata(result),
       };
       await writeImageVersion(currentShow.id, version);
       await reloadVersions();
@@ -830,9 +840,10 @@ export function useProductionPageActions(
       }
 
       // Load other visual references — locked scene refs, prior page continuity, and setting anchor.
+      // DA-102: continuity defaults off; when on, previous page only.
       const [lockedRefs, priorRefs, settingRef] = await Promise.all([
         loadPageBeatLockedRefs(resolvedBeat, settingAnchorId, currentShow),
-        loadPriorPageRefs(page, currentShow),
+        continuity ? loadPriorPageRefs(page, currentShow, 1, 0) : Promise.resolve([]),
         loadSettingAnchorRef(settingAnchorId, currentShow),
       ]);
 
@@ -850,7 +861,7 @@ export function useProductionPageActions(
         assetId: r.assetId
       }));
 
-      const settingPrefix = (!settingRef.imageRef && settingRef.settingNote)
+      const settingPrefix = settingRef.settingNote
         ? settingRef.settingNote + '\n'
         : '';
 
@@ -899,7 +910,7 @@ export function useProductionPageActions(
         variantType: 'final',
         status: 'draft',
         createdAt: Date.now(),
-        metadata: result?.metadata,
+        metadata: buildStoredImageMetadata(result),
       };
       await writeImageVersion(currentShow.id, version);
       await reloadVersions();

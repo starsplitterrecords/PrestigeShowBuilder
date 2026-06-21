@@ -1,4 +1,3 @@
-
 import { Show, Character } from '../../types/models';
 import { 
   mineConceptFromRichInput, 
@@ -15,11 +14,11 @@ import {
   generateBleedPalette,
   extractNarrativeMechanism
 } from '../../geminiService';
-
+ 
 import { appendTextGenerationLog } from '../../apiUtils';
-
+ 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
+ 
 /**
  * Runs async tasks with a maximum concurrency limit.
  * Prevents overwhelming the API with simultaneous requests
@@ -46,16 +45,19 @@ async function withConcurrencyLimit<T>(
   
   return results;
 }
-
+ 
 export const stageShow = async (
   liveShowRef: { current: Show },
   forceRedraft: boolean,
   { log, updateStatus, checkCancelled, commit, dispatch, mode }: any
 ) => {
   const liveShow = () => liveShowRef.current;
-
+ 
   // 1. Expand Concept if missing or forced
-  if (!liveShow().themes || forceRedraft) {
+  // DA-090: an authored expandedBible (or themes) counts as present — the
+  // concept stage skips generation so it builds on the author's text rather
+  // than overwriting it. forceRedraft still regenerates deliberately.
+  if ((!liveShow().themes && !liveShow().expandedBible) || forceRedraft) {
     checkCancelled();
     log("AI: Processing Concept...");
     updateStatus("Analyzing Series Foundation...");
@@ -99,7 +101,7 @@ export const stageShow = async (
     }
     await sleep(1000);
   }
-
+ 
   // 1.5 Extract Narrative Mechanism
   if (!liveShow().narrativeMechanism || forceRedraft) {
     checkCancelled();
@@ -118,7 +120,7 @@ export const stageShow = async (
       log("✓ Narrative Mechanism committed.");
     }
   }
-
+ 
   // 2. Generate Characters if missing or forced
   if (liveShow().characters.length === 0 || forceRedraft) {
     checkCancelled();
@@ -167,7 +169,7 @@ export const stageShow = async (
     
     await commit({ characters: newChars });
     await sleep(500);
-
+ 
     log("AI: Deep-diving into character profiles...");
     
     let completedCount = 0;
@@ -205,9 +207,9 @@ export const stageShow = async (
       
       return { char, summary, visualAnchor };
     });
-
+ 
     const summaryResults = await withConcurrencyLimit(summaryTasks, 3);
-
+ 
     const updatedChars = [...liveShow().characters];
     for (const { char, summary, visualAnchor } of summaryResults) {
       const idx = updatedChars.findIndex(c => c.id === char.id);
@@ -259,7 +261,7 @@ export const stageShow = async (
         }
       });
     }
-
+ 
     // 2.1 Classify Protagonists
     log("AI: Classifying Protagonists...");
     const protagonistMap = await classifyProtagonists(liveShow(), mode, (log) => {
@@ -279,15 +281,15 @@ export const stageShow = async (
     }
     await commit({ characters: charsWithProtagonist });
     log("✓ Protagonists classified.");
-
+ 
     const charsNeedingVoice = liveShow().characters.filter(
       c => !c.voiceProfile || c.voiceProfile.trim() === ''
     );
-
+ 
     if (charsNeedingVoice.length > 0) {
       log(`AI: Generating voice profiles for ${charsNeedingVoice.length} characters...`);
       let voiceCompleted = 0;
-
+ 
       const voiceTasks = charsNeedingVoice.map(char => async () => {
         checkCancelled();
         const voiceProfile = await generateCharacterVoiceProfile(
@@ -305,9 +307,9 @@ export const stageShow = async (
         updateStatus(`Voice Profile: ${char.name}`, { current: voiceCompleted, total: charsNeedingVoice.length });
         return { charId: char.id, voiceProfile };
       });
-
+ 
       const voiceResults = await withConcurrencyLimit(voiceTasks, 3);
-
+ 
       const charsWithVoice = [...liveShow().characters];
       for (const { charId, voiceProfile } of voiceResults) {
         if (!voiceProfile) continue;
@@ -319,7 +321,7 @@ export const stageShow = async (
       await commit({ characters: charsWithVoice });
       log('✓ Voice profiles committed.');
     }
-
+ 
     // 2.2 Extract Voice Constraints
     const charsNeedingVoiceConstraints = liveShow().characters.filter(
       c => c.voiceProfile && !c.voiceConstraints
@@ -350,7 +352,7 @@ export const stageShow = async (
       await commit({ characters: charsWithVoiceConstraints });
       log('✓ Voice constraints committed.');
     }
-
+ 
     // After voiceConstraints commit in stageShow:
     const protagonistsNeedingPalette = liveShow().characters.filter(
       c => c.isProtagonist && !c.memoryBleedPalette
@@ -379,7 +381,7 @@ export const stageShow = async (
       await commit({ characters: charsWithPalettes });
       log('✓ Memory bleed palettes committed.');
     }
-
+ 
     log("AI: Synthesizing visual anchors...");
     const charsNeedingPortrait = liveShow().characters.filter(
       c => !c.portraitAssetId

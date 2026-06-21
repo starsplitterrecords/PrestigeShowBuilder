@@ -1,22 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../StoreContext';
 import { WorkspaceView } from '../types/models';
-import HierarchyTree from './nav/HierarchyTree';
+// DA-096: legacy HierarchyTree graveyarded (legacy season/episode browser).
 import { useRecentlyVisited } from '../hooks/useRecentlyVisited';
-
+ 
 const ProjectTree: React.FC = () => {
   const { state, dispatch } = useStore();
   const { view, currentShow, activePath } = state;
   const { visited } = useRecentlyVisited();
   const [recentExpanded, setRecentExpanded] = useState(false);
-
+ 
   const handleNavClick = (view: WorkspaceView) => {
     dispatch({ type: 'SET_VIEW', view });
     if (state.isMobileMenuOpen) {
       dispatch({ type: 'TOGGLE_MOBILE_MENU' });
     }
   };
-
+ 
   return (
     <aside className={`w-64 border-r border-white/70 bg-[#0a0a0a] flex-col shrink-0 fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 lg:relative lg:translate-x-0 lg:h-full ${state.isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} flex`}>
       <div className="p-6 border-b border-white/70 flex justify-between items-center">
@@ -51,13 +51,12 @@ const ProjectTree: React.FC = () => {
             </button>
           ))}
         </div>
-
+ 
         <div className="border-t border-white/70"></div>
-
+ 
         {/* ── PRODUCTION ────────────────────────────── */}
         <div className="space-y-1">
           {([
-            { view: "production-hub", label: "Production Hub" },
             { view: "psb4",           label: "Story Pipeline" },
             { view: "visual-planning", label: "Visual Planner" },
             { view: "workbench",      label: "Scene Workbench" },
@@ -76,9 +75,9 @@ const ProjectTree: React.FC = () => {
             </button>
           ))}
         </div>
-
+ 
         <div className="border-t border-white/70"></div>
-
+ 
         {/* ── LOGS ────────────────────────────── */}
         <div className="space-y-1">
           {([
@@ -99,9 +98,9 @@ const ProjectTree: React.FC = () => {
             </button>
           ))}
         </div>
-
+ 
         <div className="border-t border-white/70"></div>
-
+ 
         {/* ── EXPORTS ────────────────────────────── */}
         <div className="space-y-1">
           <button
@@ -116,23 +115,18 @@ const ProjectTree: React.FC = () => {
             Exports
           </button>
         </div>
-
+ 
         {/* ── STORY HIERARCHY ──────────────────────────── */}
         {currentShow && (
           <div className="space-y-2 pt-4">
             <div className="px-4 text-[10px] uppercase tracking-[0.3em] font-black text-white/90">
               Story Hierarchy
             </div>
-
-            {/* Hierarchy tree */}
-            {currentShow.seasons?.length > 0 && (
-              <div className="pt-1">
-                <HierarchyTree />
-              </div>
-            )}
+ 
+            {/* DA-096: legacy hierarchy tree removed. */}
           </div>
         )}
-
+ 
         {/* ── BOTTOM SPACER ────────────────────────────── */}
         {/* Ensures bottom items are reachable when PipelineHUD banner is visible */}
         <div className="h-32 shrink-0" />
@@ -140,5 +134,5 @@ const ProjectTree: React.FC = () => {
     </aside>
   );
 };
-
+ 
 export default ProjectTree;

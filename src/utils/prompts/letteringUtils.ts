@@ -1,9 +1,3 @@
-// planScenePages.ts — pruned by DA-081
-// This module was the beat-era scene-page planner (planScenePages,
-// buildPagePrompt, planToOverlays). All of that is dead since DA-076/077;
-// page assembly now lives in finalPageContract + generateFinalComicPage.
-// Only the three text utilities the contract path uses survive here.
-
 import { CharacterPosition, TextOverlaySpec } from '../../types/models';
 import {
   MAX_BALLOON_CHARS,

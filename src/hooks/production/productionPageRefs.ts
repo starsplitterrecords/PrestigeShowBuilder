@@ -74,10 +74,11 @@ export async function loadSettingAnchorRef(
       assetId: anchor.assetId,
       label: `${anchor.name}`,
       description:
-        'ENVIRONMENT REFERENCE: This is the canonical appearance of this ' +
-        'location. Match the architecture, lighting, colour palette, and ' +
-        'spatial layout exactly in all panels. Do not invent new visual ' +
-        'elements not visible in this reference.',
+        'SETTING REFERENCE: Use this image as the source of truth for ' +
+        'architecture, layout, materials, lighting feel, and environmental ' +
+        'continuity. Preserve the recognizable location. Add only the ' +
+        'characters, props, action, panel-specific changes, and readable ' +
+        'text explicitly requested by the page prompt.',
       isCharacter: false,
     },
     settingNote,

@@ -4,20 +4,20 @@ import { DataCleanupModal } from './DataCleanupModal';
 import { Database, Save, Check, ChevronLeft, Home, Cloud, AlertTriangle, RefreshCw, FolderTree } from 'lucide-react';
 import { FULLSCREEN_VIEWS } from '../types/models';
 import { VaultStorage } from '../storage/VaultStorage';
-
+ 
 const Header: React.FC = () => {
   const { state, dispatch, save } = useStore();
   const { currentShow, isSaving, isDirty } = state;
   const [isCleanupOpen, setIsCleanupOpen] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isConfirmRestoreOpen, setIsConfirmRestoreOpen] = useState(false);
-
+ 
   if (!currentShow) return null;
-
+ 
   const handleApplyRestore = async () => {
     setIsConfirmRestoreOpen(false);
     if (!currentShow) return;
-
+ 
     setIsRestoring(true);
     try {
       const fresh = await VaultStorage.pullFromCloud(currentShow.id);
@@ -32,12 +32,12 @@ const Header: React.FC = () => {
         });
         return;
       }
-
+ 
       // Re-stamp local sync timestamp
       if ((fresh as any).cloudLastModified) {
         await VaultStorage.setLocalSyncMeta(fresh.id, (fresh as any).cloudLastModified);
       }
-
+ 
       dispatch({ type: 'LOAD_SHOW_SUCCESS', show: fresh });
       dispatch({
         type: 'ADD_TOAST',
@@ -61,10 +61,10 @@ const Header: React.FC = () => {
       setIsRestoring(false);
     }
   };
-
+ 
   const showHomeButton = state.view !== 'dashboard' && FULLSCREEN_VIEWS.includes(state.view);
-
-
+ 
+ 
   return (
     <header className="h-16 border-b border-white/70 bg-[#0a0a0a] flex items-center justify-between px-4 md:px-6 shrink-0 z-30">
       <div className="flex items-center gap-4 md:gap-6">
@@ -81,7 +81,7 @@ const Header: React.FC = () => {
           <ChevronLeft size={16} />
           <span className="hidden md:inline">Vault</span>
         </button>
-
+ 
         {showHomeButton && (
           <>
             <div className="h-4 w-px bg-white/50" />
@@ -94,13 +94,13 @@ const Header: React.FC = () => {
             </button>
           </>
         )}
-
+ 
         <div className="h-4 w-px bg-white/50" />
         <h1 className="text-lg md:text-xl font-bold text-white truncate max-w-[150px] sm:max-w-xs md:max-w-md">
           {currentShow.titleSuggestion || currentShow.name}
         </h1>
       </div>
-
+ 
       <div className="flex items-center gap-4 md:gap-6">
         {state.generationMode === 'free' && (
           <span className="px-2 py-0.5 bg-amber-400/20 border border-amber-400/40 rounded-full text-[10px] font-black uppercase tracking-widest text-amber-300">
@@ -117,7 +117,7 @@ const Header: React.FC = () => {
               <Check size={10} /> Saved
             </span>
           )}
-
+ 
           <button
             onClick={() => save()}
             disabled={isSaving || !isDirty}
@@ -133,7 +133,7 @@ const Header: React.FC = () => {
             <span className="hidden lg:inline">Save</span>
           </button>
         </div>
-
+ 
         <button
           onClick={() => dispatch({ type: 'TOGGLE_FORCE_SHOW_TREE' })}
           className={`flex items-center gap-2 px-3 py-1.5 border rounded-sm text-[10px] font-black uppercase tracking-widest transition-all ${
@@ -146,12 +146,12 @@ const Header: React.FC = () => {
           <FolderTree className="w-3.5 h-3.5" />
           <span>{state.forceShowTree ? "Hide Tree" : "Show Tree"}</span>
         </button>
-
+ 
         <button
           onClick={() => setIsConfirmRestoreOpen(true)}
           disabled={isRestoring}
           className="flex items-center gap-2 px-3 py-1.5 bg-red-950/20 border border-red-500/30 rounded-sm
-                     text-[10px] font-black uppercase tracking-widest text-red-400
+                     text-[10px] font-black uppercase tracking-widest text-red-100
                      hover:bg-red-500/20 hover:text-red-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           title="Bypass local IndexedDB and restore latest show backup from Cloud Firestore"
         >
@@ -173,7 +173,7 @@ const Header: React.FC = () => {
           <Database className="w-3.5 h-3.5" />
           <span className="hidden lg:inline">Cleanup</span>
         </button>
-
+ 
         <button
           onClick={() => {
             if (state.view === 'workbench') {
@@ -191,21 +191,22 @@ const Header: React.FC = () => {
         >
           {state.view === 'workbench' ? 'LEGACY: PANELS' : 'Scene Workbench'}
         </button>
-
-
+ 
+ 
       </div>
-
+ 
       {isCleanupOpen && (
         <DataCleanupModal
           onApply={(next) => {
             dispatch({ type: 'UPDATE_SHOW', updates: next });
-            // DA-083: persist immediately (local-first); don't wait for a manual SAVE.
+            // DA-092: persist immediately so a destructive repair (e.g. issue
+            // dedup) survives reload without requiring a manual SAVE.
             void save(next);
           }}
           onCancel={() => setIsCleanupOpen(false)}
         />
       )}
-
+ 
       {isConfirmRestoreOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070707]/90 backdrop-blur-sm">
           <div className="w-full max-w-lg bg-[#0c0d0f] border border-red-500/30 p-6 rounded-sm space-y-4 shadow-2xl">
@@ -222,19 +223,19 @@ const Header: React.FC = () => {
                 </p>
               </div>
             </div>
-
+ 
             <div className="text-xs text-white/95 leading-relaxed bg-[#140a0c] border border-red-900/20 p-4 rounded-sm space-y-2">
               <p>
                 Are you sure you want to pull the <span className="text-red-400 font-bold">last cloud-saved version</span> of this show?
               </p>
-              <p className="text-white/80">
+              <p className="text-white/80 font-light leading-relaxed">
                 This will overwrite and entirely discard all unsaved local changes and re-seed your workspace IndexedDB with the latest copy preserved on Firestore cloud storage.
               </p>
-              <p className="text-white/70 text-[11px] italic">
+              <p className="text-white/70 text-[11px] italic font-light">
                 Only do this if you need to recover from a corrupted local state, data erasure or an accidental local wipe.
               </p>
             </div>
-
+ 
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 onClick={() => setIsConfirmRestoreOpen(false)}
@@ -256,5 +257,5 @@ const Header: React.FC = () => {
     </header>
   );
 };
-
+ 
 export default Header;

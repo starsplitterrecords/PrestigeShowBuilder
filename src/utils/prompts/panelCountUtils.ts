@@ -1,12 +1,3 @@
-// assembleComicPrompt.ts — pruned by DA-081
-// This module was the beat-era page-prompt assembler (assembleComicPrompt,
-// planComicPage, derivePanelAction, deriveSpeakerAwareShot,
-// assignBalloonPosition, collectPageCharacters, resolveSettingContext).
-// All of that is dead since DA-076/077; prompt assembly now lives in
-// finalPageContract + generateFinalComicPage. What survives: the
-// LINE_COUNT_TO_PANEL_COUNT mapping the contract uses, and the inert
-// plan/spec interfaces still referenced as types.
-
 import { CaptionEntry, CharacterPosition } from '../../types/models';
 
 export interface BalloonSpec {
@@ -33,20 +24,19 @@ export interface PanelPlan {
   action: string;           // What the camera shows — from beat.description, scoped to this panel
   subtext?: string;
   direction?: string;
-  // DA-042 — panel-level direction carried from BeatPanelPlan.
   foreground?: string;
   midground?: string;
   background?: string;
   relationalStaging?: string;
   directAddress?: boolean;
-  primarySpeaker?: string;  // D93: visual description of the character to frame
-  captions?: CaptionEntry[];  // D99
+  primarySpeaker?: string;  // visual description of the character to frame
+  captions?: CaptionEntry[];
   balloons: {
     speakerHandle: string;
     text: string;
     position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
   }[];
-  panelPrompt: string;      // D209 - specific prompt for this panel
+  panelPrompt: string;      // specific prompt for this panel
   characterPositions?: CharacterPosition[];
 }
 
@@ -55,9 +45,9 @@ export interface ComicPagePlan {
   panelCount: 1 | 2 | 3 | 4 | 5 | 6;
   layoutName: string;
   panels: PanelPlan[];
-  generationPrompt: string;  // @deprecated D209 - was used for one-pass
+  generationPrompt: string;  // @deprecated
   fallbacks?: string[];
-  panelPlanSource?: 'ai-plan' | 'heuristic-plan' | 'none'; // D210
+  panelPlanSource?: 'ai-plan' | 'heuristic-plan' | 'none';
 }
 
 export const LINE_COUNT_TO_PANEL_COUNT = (n: number): 1 | 2 | 3 | 4 => {

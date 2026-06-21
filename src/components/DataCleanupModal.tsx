@@ -1,19 +1,19 @@
-
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Check, Loader2, AlertCircle, RotateCcw, ArrowRight } from 'lucide-react';
 import { useStore } from '../StoreContext';
 import { Show } from '../types/models';
-import { Operation, RosterChange, StructuralChange, ProseChange, PlaceholderHit, RepairDoubleAtResult } from '../types/dataCleanup';
+import { Operation, RosterChange, StructuralChange, ProseChange, PlaceholderHit, RepairDoubleAtResult, DuplicateIssueChange } from '../types/dataCleanup';
 import {
   previewNormalizeRoster, applyNormalizeRoster,
   previewNormalizeStructural, applyNormalizeStructural,
   previewResolveProse, applyResolveProse,
   findTemplatePlaceholders,
   previewRepairDoubleAt, applyRepairDoubleAt,
+  previewDedupIssues, applyDedupIssues,
   canonicalize
 } from '../utils/dataCleanup';
-
+ 
 export const DataCleanupModal = ({
   onApply, onCancel,
 }: {
@@ -22,33 +22,36 @@ export const DataCleanupModal = ({
 }) => {
   const { state } = useStore();
   const show = state.currentShow;
-
+ 
   const [op, setOp] = useState<Operation | null>(null);
   const [showCode, setShowCode] = useState('vik'); 
   const [preview, setPreview] = useState<any>(null);
   const [isApplying, setIsApplying] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [completedOps, setCompletedOps] = useState<Set<Operation>>(new Set());
-
+ 
   if (!show) return null;
-
+ 
   // Recommendations: 1 -> 2 -> 3 -> 4, with 5 as a standalone recovery step
-  const opOrder: Operation[] = ['roster', 'structural', 'prose', 'placeholders', 'repair-double-at'];
+  const opOrder: Operation[] = ['roster', 'structural', 'prose', 'placeholders', 'repair-double-at', 'dedup-issues'];
   const opLabels: Record<Operation, string> = {
     roster: '1. Normalize Roster',
     structural: '2. Normalize References',
     prose: '3. Resolve Handles to Names',
     placeholders: '4. Surface Placeholders',
     'repair-double-at': '5. Repair Double-@ Handles',
+    'dedup-issues': '6. De-duplicate Issues',
   };
-
+ 
   const handleSelectOp = (selectedOp: Operation) => {
     setOp(selectedOp);
     if (selectedOp === 'repair-double-at') {
       setPreview(previewRepairDoubleAt(show));
+    } else if (selectedOp === 'dedup-issues') {
+      setPreview(previewDedupIssues(show));
     }
   };
-
+ 
   const totalChanges = useMemo(() => {
     if (!preview) return 0;
     if (op === 'repair-double-at') {
@@ -56,7 +59,7 @@ export const DataCleanupModal = ({
     }
     return preview.length ?? 0;
   }, [preview, op]);
-
+ 
   const runPreview = () => {
     if (op === 'roster')
       setPreview(previewNormalizeRoster(show, showCode));
@@ -68,8 +71,10 @@ export const DataCleanupModal = ({
       setPreview(findTemplatePlaceholders(show));
     else if (op === 'repair-double-at')
       setPreview(previewRepairDoubleAt(show));
+    else if (op === 'dedup-issues')
+      setPreview(previewDedupIssues(show));
   };
-
+ 
   const runApply = () => {
     setIsApplying(true);
     setTimeout(() => {
@@ -83,6 +88,8 @@ export const DataCleanupModal = ({
           next = applyResolveProse(show, preview);
         else if (op === 'repair-double-at')
           next = applyRepairDoubleAt(show, preview);
+        else if (op === 'dedup-issues')
+          next = applyDedupIssues(show, preview);
         
         if (op !== 'placeholders') {
           onApply(next, op!);
@@ -99,13 +106,13 @@ export const DataCleanupModal = ({
       }
     }, 500);
   };
-
+ 
   const reset = () => {
     setOp(null);
     setPreview(null);
     setConfirmed(false);
   };
-
+ 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <motion.div 
@@ -129,7 +136,7 @@ export const DataCleanupModal = ({
             <X className="w-5 h-5 text-white/60" />
           </button>
         </div>
-
+ 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
           {!op ? (
@@ -146,15 +153,16 @@ export const DataCleanupModal = ({
                       {opLabels[key]}
                       {completedOps.has(key) && <Check className="w-4 h-4 text-emerald-400 inline-block ml-2" />}
                     </h3>
-                    <p className="text-xs mt-2 text-white/60">
+                    <p className="text-xs mt-2 text-white/60 font-light leading-relaxed">
                       {key === 'roster' && 'Canonicalize character handles like @vik.PascalCase.'}
                       {key === 'structural' && 'Update structural fields (handle, ids) across the show.'}
                       {key === 'prose' && 'Replace @handles in prose fields with character names.'}
                       {key === 'placeholders' && 'Find @SHOWCODE and other template leftovers.'}
                       {key === 'repair-double-at' && 'Finds and removes accidental double-@ prefixes on handles (@@vik.Name -> @vik.Name).'}
+                      {key === 'dedup-issues' && 'Find same-number duplicate issues, keep the structured copy and remove the staging-only copy.'}
                     </p>
                     {isRecommendedNext && (
-                      <p className="text-[10px] text-white/60 uppercase tracking-widest mt-2">
+                      <p className="text-[10px] text-white/60 uppercase tracking-widest mt-2 font-semibold">
                         Recommended after step {index}
                       </p>
                     )}
@@ -166,8 +174,8 @@ export const DataCleanupModal = ({
                   <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
                   <div>
                     <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider">Safety First</h4>
-                    <p className="text-xs text-white/70 mt-1">
-                      Operations are undoable and skip log fields. Recommended order: 1 → 2 → 3. Use Operation 5 as a standalone recovery step to repair double-@ damage if encountered.
+                    <p className="text-xs text-white/70 mt-1 leading-relaxed font-light">
+                      Operations are undoable and skip log fields. Recommended order: 1 → 2 → 3. Use Operation 5 to repair double-@ damage, and Operation 6 to resolve duplicate Issue objects.
                     </p>
                   </div>
                 </div>
@@ -213,7 +221,7 @@ export const DataCleanupModal = ({
                     {totalChanges} Changes Detected
                   </span>
                 </div>
-                {op !== 'repair-double-at' && (
+                {op !== 'repair-double-at' && op !== 'dedup-issues' && (
                   <button 
                     onClick={() => setPreview(null)}
                     className="text-xs text-amber-400 hover:underline"
@@ -222,17 +230,18 @@ export const DataCleanupModal = ({
                   </button>
                 )}
               </div>
-
+ 
               <div className="border border-white/10 rounded-lg overflow-hidden bg-black">
                 {op === 'roster' && <RosterPreview data={preview} />}
                 {op === 'structural' && <StructuralPreview data={preview} />}
                 {op === 'prose' && <ProsePreview data={preview} />}
                 {op === 'placeholders' && <PlaceholderPreview data={preview} />}
                 {op === 'repair-double-at' && <RepairPreview data={preview} show={show} />}
+                {op === 'dedup-issues' && <DedupPreview data={preview} />}
               </div>
-
+ 
               <div className="flex justify-between items-center bg-white/5 p-4 rounded-lg">
-                <div className="text-xs text-white/60 max-w-md">
+                <div className="text-xs text-white/60 max-w-md font-light">
                   {op === 'placeholders' 
                     ? "This is a read-only report to help you find leftovers manually." 
                     : "Proceeding will update your show data. You can undo this change after applying if needed."}
@@ -240,7 +249,7 @@ export const DataCleanupModal = ({
                 <div className="flex gap-3">
                   <button 
                     onClick={() => setPreview(null)}
-                    className="px-4 py-2 text-white/60 hover:text-white"
+                    className="px-4 py-2 text-white/60 hover:text-white text-xs font-bold uppercase tracking-wider"
                   >
                     Cancel
                   </button>
@@ -248,10 +257,10 @@ export const DataCleanupModal = ({
                     <button 
                       onClick={runApply}
                       disabled={isApplying || totalChanges === 0}
-                      className="flex items-center gap-2 px-8 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:bg-white/10 disabled:text-white/60 text-black font-bold rounded-md"
+                      className="flex items-center gap-2 px-8 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:bg-white/10 disabled:text-white/60 text-black font-bold rounded-md text-xs uppercase tracking-wider"
                     >
                       {isApplying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                      {op === 'repair-double-at' ? 'Apply Repairs' : `Apply ${totalChanges} Changes`}
+                      {op === 'repair-double-at' ? 'Apply Repairs' : op === 'dedup-issues' ? 'Apply De-duplication' : `Apply ${totalChanges} Changes`}
                     </button>
                   )}
                 </div>
@@ -263,20 +272,20 @@ export const DataCleanupModal = ({
                 <Check className="w-8 h-8 text-emerald-400" />
               </div>
               <h3 className="text-xl text-white">Cleanup Applied Successfully</h3>
-              <p className="text-sm text-white/60 max-w-sm text-center">
-                Your show data has been updated and saved.
+              <p className="text-sm text-white/60 max-w-sm text-center font-light leading-relaxed">
+                Your show data has been updated and immediately saved to Firestore.
               </p>
               <div className="flex gap-3 mt-4">
                 <button 
                   onClick={reset}
-                  className="flex items-center gap-2 px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-white"
+                  className="flex items-center gap-2 px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-sm text-white text-xs font-bold uppercase tracking-wider"
                 >
                   <RotateCcw className="w-4 h-4" />
                   Run Another Operation
                 </button>
                 <button 
                   onClick={onCancel}
-                  className="px-8 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-md"
+                  className="px-8 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-sm text-xs uppercase tracking-wider"
                 >
                   Done
                 </button>
@@ -288,7 +297,7 @@ export const DataCleanupModal = ({
     </div>
   );
 };
-
+ 
 const RosterPreview = ({ data }: { data: RosterChange[] }) => (
   <table className="w-full text-left text-xs border-collapse">
     <thead className="bg-white/5 border-b border-white/10">
@@ -311,10 +320,10 @@ const RosterPreview = ({ data }: { data: RosterChange[] }) => (
               <span className="text-emerald-400">Fix Preferred</span>
             )}
           </td>
-          <td className="p-3 text-white/60">{row.oldHandle}</td>
+          <td className="p-3 text-white/60 font-mono">{row.oldHandle}</td>
           <td className="p-3 text-white/60"><ArrowRight className="w-3 h-3" /></td>
           <td className="p-3">
-            <span className={row.reason === 'no-change' ? 'text-white/60' : 'text-white'}>
+            <span className={row.reason === 'no-change' ? 'text-white/60 font-mono' : 'text-white font-mono'}>
               {row.newHandle}
             </span>
           </td>
@@ -323,7 +332,7 @@ const RosterPreview = ({ data }: { data: RosterChange[] }) => (
     </tbody>
   </table>
 );
-
+ 
 const StructuralPreview = ({ data }: { data: StructuralChange[] }) => {
   const samples = data.slice(0, 10);
   return (
@@ -333,9 +342,9 @@ const StructuralPreview = ({ data }: { data: StructuralChange[] }) => {
           <div key={i} className="flex flex-col p-3 bg-white/5 rounded border border-white/5">
             <div className="text-[10px] font-mono text-white/60 mb-1">{s.path}</div>
             <div className="flex items-center gap-3 text-xs">
-              <span className="text-white/60">{s.oldValue}</span>
+              <span className="text-white/60 font-mono">{s.oldValue}</span>
               <ArrowRight className="w-3 h-3 text-white/60" />
-              <span className="text-emerald-400 font-mono">{s.newValue}</span>
+              <span className="text-emerald-400 font-mono font-medium">{s.newValue}</span>
             </div>
           </div>
         ))}
@@ -348,11 +357,11 @@ const StructuralPreview = ({ data }: { data: StructuralChange[] }) => {
     </div>
   );
 };
-
+ 
 const ProsePreview = ({ data }: { data: ProseChange[] }) => {
   const unresolved = Array.from(new Set(data.flatMap(d => d.unresolvedHandles)));
   const samples = data.slice(0, 5);
-
+ 
   return (
     <div className="p-4 space-y-6">
       {unresolved.length > 0 && (
@@ -361,7 +370,7 @@ const ProsePreview = ({ data }: { data: ProseChange[] }) => {
             <AlertCircle className="w-3 h-3" />
             Unresolved Handles
           </h4>
-          <p className="text-[10px] text-white/60 mt-1">
+          <p className="text-[10px] text-white/60 mt-1 font-light leading-relaxed">
             These handles have no match in your current roster and will be left as-is:
           </p>
           <div className="flex flex-wrap gap-2 mt-2">
@@ -373,16 +382,16 @@ const ProsePreview = ({ data }: { data: ProseChange[] }) => {
           </div>
         </div>
       )}
-
+ 
       <div className="space-y-4">
         {samples.map((s, i) => (
           <div key={i} className="space-y-2">
             <div className="text-[10px] font-mono text-white/60">{s.path}</div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="p-3 bg-red-500/5 rounded border border-red-500/20 text-[11px] text-white/60 italic">
+              <div className="p-3 bg-red-500/5 rounded border border-red-500/20 text-[11px] text-white/60 italic leading-relaxed">
                 {s.before}
               </div>
-              <div className="p-3 bg-emerald-500/5 rounded border border-emerald-500/20 text-[11px] text-white">
+              <div className="p-3 bg-emerald-500/5 rounded border border-emerald-500/20 text-[11px] text-white leading-relaxed">
                 {s.after}
               </div>
             </div>
@@ -397,11 +406,11 @@ const ProsePreview = ({ data }: { data: ProseChange[] }) => {
     </div>
   );
 };
-
+ 
 const PlaceholderPreview = ({ data }: { data: PlaceholderHit[] }) => (
   <div className="p-4 space-y-4">
     <div className="p-3 bg-red-500/10 border border-red-500/20 rounded">
-      <p className="text-xs text-white/70">
+      <p className="text-xs text-white/70 font-light leading-relaxed">
         The following fields contain template placeholders (e.g. @show.firstname). These should be manually resolved or cleared.
       </p>
     </div>
@@ -419,28 +428,28 @@ const PlaceholderPreview = ({ data }: { data: PlaceholderHit[] }) => (
         </div>
       ))}
       {data.length === 0 && (
-        <div className="text-center py-12 text-sm text-white/60">
+        <div className="text-center py-12 text-sm text-white/60 font-light">
           No template placeholders detected. Your show is clean!
         </div>
       )}
     </div>
   </div>
 );
-
+ 
 const RepairPreview = ({ data, show }: { data: RepairDoubleAtResult; show: Show }) => {
   const hasRoster = data.rosterRepairs && data.rosterRepairs.length > 0;
   const hasStructural = data.structuralRepairs && data.structuralRepairs.length > 0;
-
+ 
   if (!hasRoster && !hasStructural) {
     return (
       <div className="p-8 text-center bg-black">
-        <p className="text-[11px] text-white/60 uppercase tracking-widest py-12">
+        <p className="text-[11px] text-white/60 uppercase tracking-widest py-12 font-bold">
           No double-@ handles detected. Nothing to repair.
         </p>
       </div>
     );
   }
-
+ 
   return (
     <div className="p-4 space-y-6 bg-black">
       {hasRoster && (
@@ -475,7 +484,7 @@ const RepairPreview = ({ data, show }: { data: RepairDoubleAtResult; show: Show 
           </div>
         </div>
       )}
-
+ 
       {hasStructural && (
         <div className="space-y-2">
           <h4 className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
@@ -498,3 +507,37 @@ const RepairPreview = ({ data, show }: { data: RepairDoubleAtResult; show: Show 
     </div>
   );
 };
+ 
+const DedupPreview = ({ data }: { data: DuplicateIssueChange[] }) => (
+  <div className="p-4 space-y-4 bg-black">
+    <div className="p-3 bg-red-500/10 border border-red-500/20 rounded">
+      <p className="text-xs text-white/70 font-light leading-relaxed">
+        The following same-number duplicate Issue objects were found. Applying will remove the staging/weaker copy and preserve the canonical copy.
+      </p>
+    </div>
+    <div className="space-y-3">
+      {data.map((h, i) => (
+        <div key={i} className="p-3 bg-white/5 border border-white/5 rounded-lg space-y-2">
+          <div className="text-sm font-semibold text-white">Issue #{h.issueNumber} Duplicate</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div className="p-2.5 bg-emerald-500/5 border border-emerald-500/20 rounded">
+              <span className="text-[10px] font-bold text-emerald-400 uppercase block mb-1">Preserving (Canonical structure and dialogue)</span>
+              <span className="text-white font-mono text-[11px] block truncate">{h.keptUid}</span>
+              <span className="text-white/60 block mt-1">{h.keptSummary}</span>
+            </div>
+            <div className="p-2.5 bg-red-500/5 border border-red-500/20 rounded">
+              <span className="text-[10px] font-bold text-red-400 uppercase block mb-1">Removing (Derivable panel plans & staging copy)</span>
+              <span className="text-white font-mono text-[11px] block truncate">{h.removedUid}</span>
+              <span className="text-white/60 block mt-1">{h.removedSummary}</span>
+            </div>
+          </div>
+        </div>
+      ))}
+      {data.length === 0 && (
+        <div className="text-center py-12 text-sm text-white/60 font-light">
+          No same-number duplicate issues detected. Your show is clean!
+        </div>
+      )}
+    </div>
+  </div>
+);

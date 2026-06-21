@@ -21,8 +21,7 @@ const DashboardPanel: React.FC = () => {
 
   const cards = [
     { label: 'Characters', value: currentShow.characters?.length ?? 0, view: 'characters' as const },
-    { label: 'Seasons', value: currentShow.seasons?.length ?? 0, view: 'season' as const },
-    { label: 'Issues', value: stats.episodes, view: 'episode' as const },
+    { label: 'Issues', value: stats.episodes, view: 'issue-compiler' as const },
     { label: 'Page Beats', value: stats.beats, view: 'teleplay' as const },
   ];
 
@@ -48,7 +47,7 @@ const DashboardPanel: React.FC = () => {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
         {cards.map(card => (
           <button
             key={card.label}

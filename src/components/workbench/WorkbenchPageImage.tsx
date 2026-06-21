@@ -19,7 +19,7 @@ export const WorkbenchPageImage: React.FC<WorkbenchPageImageProps> = ({
   productionPageUid,
   actions,
   page,
-  pageBeat
+  pageBeat,
 }) => {
   const { state, dispatch } = useStore();
   const { currentShow } = state;
@@ -313,7 +313,7 @@ export const WorkbenchPageImage: React.FC<WorkbenchPageImageProps> = ({
               {/* Step 3: Generate Base Artwork */}
               {renderBtn(
                 Play,
-                "Generate Base Image (Step 3)",
+                "Generate Final Page Draft (Step 3)",
                 () => actions?.generateImage(),
                 isRunning,
                 page?.status === 'planned'
@@ -327,7 +327,7 @@ export const WorkbenchPageImage: React.FC<WorkbenchPageImageProps> = ({
               {/* Surgical Reroll */}
               {renderBtn(
                 RefreshCw,
-                !hasBase ? "Surgically Reroll: Generate a base image first." : "Surgically Reroll Page (Random Variant)",
+                !hasBase ? "Surgically Reroll: generate a page draft first." : "Surgically Reroll Page (Random Variant)",
                 () => actions?.rerollImage(),
                 isRunning || !hasBase,
                 "bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/85"
@@ -337,7 +337,7 @@ export const WorkbenchPageImage: React.FC<WorkbenchPageImageProps> = ({
               <div className="relative flex items-center justify-center">
                 {renderBtn(
                   Wand2,
-                  !hasBase ? "Refinement: Generate a base image first." : "Refine Layout with Custom Prompt",
+                  !hasBase ? "Refinement: generate a page draft first." : "Refine Layout with Custom Prompt",
                   () => setIsRefineOpen(!isRefineOpen),
                   isRunning || !hasBase,
                   isRefineOpen

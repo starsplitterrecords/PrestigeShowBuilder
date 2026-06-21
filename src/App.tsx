@@ -13,7 +13,7 @@ import VaultView from './components/VaultView';
 import Breadcrumb from './components/nav/Breadcrumb';
 import ErrorBoundary from './components/ErrorBoundary';
  
-// DA-089: mobile graveyarded. import MobileShell from './components/mobile/MobileShell';
+// DA-089: mobile graveyarded.
 import PanZoomViewport from './components/PanZoomViewport';
 import { FULLSCREEN_VIEWS, HIDE_BREADCRUMB_VIEWS, HIDE_PROJECT_TREE_VIEWS } from './types/models';
  
@@ -77,15 +77,7 @@ const AppContent: React.FC = () => {
    return () => window.removeEventListener('resize', handleResize);
  }, [state.viewport, dispatch]);
  
- useEffect(() => {
-   if (!state.currentShow) return;
- 
-   // DA-089: mobile graveyarded — only the desktop redirect survives.
-   const mobileOnly = ['m-show-home', 'm-hierarchy', 'm-beat-review'];
-   if (mobileOnly.includes(state.view)) {
-     dispatch({ type: 'SET_VIEW', view: 'dashboard' });
-   }
- }, [state.viewport, state.currentShow?.id]);
+
  
  if (isLoading || hasKey === null) {
    return (

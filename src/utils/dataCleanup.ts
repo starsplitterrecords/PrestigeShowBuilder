@@ -1,7 +1,6 @@
-
 import { Show } from "../types/models";
-import { RosterChange, StructuralChange, ProseChange, PlaceholderHit, RepairEntry, RepairDoubleAtResult } from "../types/dataCleanup";
-
+import { RosterChange, StructuralChange, ProseChange, PlaceholderHit, RepairEntry, RepairDoubleAtResult, DuplicateIssueChange } from "../types/dataCleanup";
+ 
 /**
  * Show data cleanup operations.
  *
@@ -12,14 +11,14 @@ import { RosterChange, StructuralChange, ProseChange, PlaceholderHit, RepairEntr
  * Operations never touch log fields (generationLog,
  * textGenerationLog, generationLog[*].parts).
  */
-
+ 
 const HANDLE_RE = /@[a-zA-Z0-9]+\.[a-zA-Z0-9]+/g;
-
+ 
 // Field paths that contain log data — never touched by cleanup.
 const LOG_FIELD_KEYS = new Set([
   'generationLog', 'textGenerationLog',
 ]);
-
+ 
 // Canonical handle format: @SHOWCODE.PascalCase
 export function canonicalize(
   rawName: string,
@@ -33,11 +32,11 @@ export function canonicalize(
     .join('');
   return `@${showCode.toLowerCase()}.${pascal}`;
 }
-
+ 
 // =================================================================
 // Operation 1: Normalize Roster
 // =================================================================
-
+ 
 export function previewNormalizeRoster(
   show: Show,
   showCode: string
@@ -76,18 +75,18 @@ export function previewNormalizeRoster(
         needsManualReview: false,
       };
     }
-
+ 
     if (result.reason !== 'no-change' && result.newHandle === result.oldHandle) {
       result.reason = 'no-change';
       result.needsManualReview = false;
     }
     return result;
   });
-
+ 
   // D320: Second pass to scan for casing duplicates within the roster itself.
   const seenLowercase = new Map<string, { id: string, handle: string }>();
   const casingDuplicates: RosterChange[] = [];
-
+ 
   for (const c of show.characters ?? []) {
     if (!c.handle) continue;
     const lower = c.handle.toLowerCase();
@@ -106,10 +105,10 @@ export function previewNormalizeRoster(
       seenLowercase.set(lower, { id: c.id, handle: c.handle });
     }
   }
-
+ 
   return [...standardChanges, ...casingDuplicates];
 }
-
+ 
 export function applyNormalizeRoster(
   show: Show,
   changes: RosterChange[]
@@ -127,11 +126,11 @@ export function applyNormalizeRoster(
   }
   return next;
 }
-
+ 
 // =================================================================
 // Operation 2: Normalize Structural References
 // =================================================================
-
+ 
 export function buildHandleMapping(
   show: Show
 ): Map<string, string> {
@@ -147,7 +146,7 @@ export function buildHandleMapping(
   }
   return mapping;
 }
-
+ 
 // CATEGORY A field path keys — these get handle replacement.
 const STRUCTURAL_FIELD_KEYS = new Set([
   // Per A24 audit. All keys here contain handles by design.
@@ -158,7 +157,7 @@ const STRUCTURAL_FIELD_KEYS = new Set([
   'char1',            // episodePairings
   'char2',            // episodePairings
 ]);
-
+ 
 export function previewNormalizeStructural(
   show: Show
 ): StructuralChange[] {
@@ -171,7 +170,7 @@ export function previewNormalizeStructural(
   });
   return changes;
 }
-
+ 
 function remapHandle(
   raw: string,
   mapping: Map<string, string>
@@ -181,7 +180,7 @@ function remapHandle(
   const namePart = m[1].toLowerCase();
   return mapping.get(namePart) ?? null;
 }
-
+ 
 function walkStructural(
   obj: any,
   path: string,
@@ -213,7 +212,7 @@ function walkStructural(
     }
   }
 }
-
+ 
 export function applyNormalizeStructural(
   show: Show, changes: StructuralChange[]
 ): Show {
@@ -223,7 +222,7 @@ export function applyNormalizeStructural(
   }
   return next;
 }
-
+ 
 function setByPath(obj: any, path: string, value: any) {
   const tokens = path.match(/[^.[\]]+/g) ?? [];
   let cur = obj;
@@ -235,11 +234,11 @@ function setByPath(obj: any, path: string, value: any) {
   const lastToken = tokens[tokens.length - 1];
   cur[lastToken] = value;
 }
-
+ 
 // =================================================================
 // Operation 3: Resolve Prose Handles to Names
 // =================================================================
-
+ 
 /**
  * D323: Build two indexes for tolerant prose lookup.
  *   exact:  full-handle string -> name (fastest path)
@@ -264,7 +263,7 @@ function buildHandleToNameMapping(
   }
   return { exact, byName };
 }
-
+ 
 function resolveHandleToName(
   handle: string,
   maps: { exact: Map<string, string>; byName: Map<string, string> }
@@ -275,7 +274,7 @@ function resolveHandleToName(
   if (!m) return undefined;
   return maps.byName.get(m[1].toLowerCase());
 }
-
+ 
 export function previewResolveProse(
   show: Show
 ): ProseChange[] {
@@ -302,7 +301,7 @@ export function previewResolveProse(
   });
   return changes;
 }
-
+ 
 const PROSE_FIELD_KEYS = new Set([
   // Show-level
   'premise', 'richInput',
@@ -323,7 +322,7 @@ const PROSE_FIELD_KEYS = new Set([
   'panelPrompt', 'generationPrompt',
   'assembledPrompt', 'beatSummary',
 ]);
-
+ 
 function walkProse(
   obj: any,
   path: string,
@@ -348,7 +347,7 @@ function walkProse(
     }
   }
 }
-
+ 
 export function applyResolveProse(
   show: Show, changes: ProseChange[]
 ): Show {
@@ -358,14 +357,14 @@ export function applyResolveProse(
   }
   return next;
 }
-
+ 
 // =================================================================
 // Operation 4: Surface Template Placeholders
 // =================================================================
-
+ 
 const PLACEHOLDER_RE =
   /@(show|SHOWCODE)\.[a-zA-Z]+|@[a-zA-Z0-9]+\.(charactername|firstname)/g;
-
+ 
 export function findTemplatePlaceholders(
   show: Show
 ): PlaceholderHit[] {
@@ -384,7 +383,7 @@ export function findTemplatePlaceholders(
   });
   return hits;
 }
-
+ 
 /**
  * Diagnostic: walk the show and return all paths visited
  * by walkStructural + walkProse. Used to verify D298 coverage
@@ -400,14 +399,14 @@ export function auditWalkerCoverage(
   const structuralPaths: string[] = [];
   const proseFields: string[] = [];
   const allStringNodes: { path: string; value: string }[] = [];
-
+ 
   walkStructural(show, 'show', (path, _value) => {
     structuralPaths.push(path);
   });
   walkProse(show, 'show', (path, _value) => {
     proseFields.push(path);
   });
-
+ 
   // Walk the entire show and find all string fields,
   // including those NOT visited by structural or prose walkers.
   function walkAll(obj: any, path: string, inLog: boolean) {
@@ -429,29 +428,29 @@ export function auditWalkerCoverage(
     }
   }
   walkAll(show, 'show', false);
-
+ 
   // Find paths visited by allStringNodes but not by
   // either structural or prose walkers.
   const visited = new Set([...structuralPaths, ...proseFields]);
   const unvisitedWithHandles = allStringNodes
     .filter(node => !visited.has(node.path) && HANDLE_RE.test(node.value))
     .map(node => node.path);
-
+ 
   return {
     structuralPaths: dedupe(structuralPaths),
     proseFields: dedupe(proseFields),
     unvisitedStringFields: unvisitedWithHandles,
   };
 }
-
+ 
 function dedupe<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
 }
-
+ 
 // =================================================================
 // Operation 5: Repair Double-@ Handles
 // =================================================================
-
+ 
 export function previewRepairDoubleAt(
   show: Show
 ): RepairDoubleAtResult {
@@ -466,7 +465,7 @@ export function previewRepairDoubleAt(
       });
     }
   }
-
+ 
   const structuralRepairs: StructuralChange[] = [];
   walkStructural(show, 'show', (path, value) => {
     if (value.startsWith('@@')) {
@@ -477,10 +476,10 @@ export function previewRepairDoubleAt(
       });
     }
   });
-
+ 
   return { rosterRepairs, structuralRepairs };
 }
-
+ 
 export function applyRepairDoubleAt(
   show: Show,
   result: RepairDoubleAtResult
@@ -495,5 +494,98 @@ export function applyRepairDoubleAt(
   for (const s of result.structuralRepairs) {
     setByPath(next, s.path.replace(/^show\./, ''), s.newValue);
   }
+  return next;
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────
+// Operation 6: De-duplicate Issues (DA-092)
+// Some shows carry two Issue objects with the same `number` but different uids
+// — divergent forks (e.g. one with full act/scene structure + script, one with
+// only panel plans). The promotion-cleanup audit operates WITHIN an issue and
+// cannot resolve a duplicate at the ISSUE level, so these block generation via
+// findCanonicalPageBeat's address-twin guard. This operation finds same-number
+// duplicate issues and removes the weaker copy, keeping the richer one.
+//
+// Keep-rule (deterministic, transparent): score each copy by structural +
+// written content — scenes, pageBeats, and script entries dominate; panel
+// plans are a minor tiebreaker because they are re-derivable by re-running
+// direction, whereas authored structure and dialogue are not. Highest score
+// is kept. Pure: does not mutate the input.
+// ─────────────────────────────────────────────────────────────────────────
+ 
+interface IssueScore {
+  scenes: number;
+  pageBeats: number;
+  scriptEntries: number;
+  panelPlans: number;
+}
+ 
+function scoreIssue(iss: any): IssueScore {
+  const acts = iss?.acts || [];
+  let scenes = 0, pageBeats = 0, scriptEntries = 0, panelPlans = 0;
+  for (const a of acts) {
+    const scs = a?.scenes || [];
+    scenes += scs.length;
+    for (const sc of scs) {
+      const pbs = sc?.pageBeats || [];
+      pageBeats += pbs.length;
+      for (const pb of pbs) {
+        const ents = (pb?.script?.entries || pb?.script?.lines || []);
+        scriptEntries += ents.length;
+        panelPlans += (pb?.panelPlans || []).length;
+      }
+    }
+  }
+  return { scenes, pageBeats, scriptEntries, panelPlans };
+}
+ 
+// Higher is better. Authored content (scenes/beats/script) weighted far above
+// re-derivable panel plans.
+function rank(s: IssueScore): number {
+  return s.scenes * 100000 + s.pageBeats * 1000 + s.scriptEntries * 10 + Math.min(s.panelPlans, 9);
+}
+ 
+function describe(s: IssueScore): string {
+  return `${s.scenes} scenes, ${s.pageBeats} beats, ${s.scriptEntries} script lines, ${s.panelPlans} panel plans`;
+}
+ 
+export function previewDedupIssues(show: Show): DuplicateIssueChange[] {
+  const issues: any[] = (show as any).issues || [];
+  const byNumber = new Map<number, any[]>();
+  for (const iss of issues) {
+    const n = iss?.number ?? iss?.issueNumber;
+    if (n == null) continue;
+    if (!byNumber.has(n)) byNumber.set(n, []);
+    byNumber.get(n)!.push(iss);
+  }
+  const changes: DuplicateIssueChange[] = [];
+  for (const [number, group] of byNumber) {
+    if (group.length < 2) continue;
+    // sort by rank desc; keep [0], remove the rest (report each removal)
+    const ranked = group
+      .map(iss => ({ iss, score: scoreIssue(iss), r: rank(scoreIssue(iss)) }))
+      .sort((a, b) => b.r - a.r);
+    const keep = ranked[0];
+    for (let i = 1; i < ranked.length; i++) {
+      const drop = ranked[i];
+      changes.push({
+        issueNumber: number,
+        keptUid: keep.iss.uid,
+        keptSummary: describe(keep.score),
+        removedUid: drop.iss.uid,
+        removedSummary: describe(drop.score),
+      });
+    }
+  }
+  return changes;
+}
+ 
+export function applyDedupIssues(
+  show: Show,
+  changes: DuplicateIssueChange[]
+): Show {
+  const removeUids = new Set(changes.map(c => c.removedUid));
+  const next = structuredClone(show) as any;
+  next.issues = (next.issues || []).filter((iss: any) => !removeUids.has(iss.uid));
   return next;
 }

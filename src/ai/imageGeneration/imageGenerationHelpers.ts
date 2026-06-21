@@ -1,5 +1,5 @@
 import { Show, ScenePagePlan, GenerationPartSummary } from "../../types/models";
-import { ComicPagePlan, ComicPanelSpec } from "../../utils/prompts/assembleComicPrompt";
+import { ComicPagePlan, ComicPanelSpec } from "../../utils/prompts/panelCountUtils";
 import { GenerationMode } from "../../utils/generationMode";
 
 export interface GeneratedImageResult {
@@ -68,6 +68,16 @@ export function resolveImageSize(
 const toBase64 = (uri: string): string =>
   uri.replace(/^data:image\/\w+;base64,/, '');
 
+// DA-101: the mimeType sent to the model must match the actual bytes. Every
+// AI-generated image (pages, AI-generated portraits) is re-encoded to JPEG by
+// compressAndStore regardless of what the model originally returned, so a
+// hardcoded 'image/png' here was wrong for any generated reference — only
+// true for refs that happen to be uploaded PNGs. Read it off the data URI.
+export const mimeTypeFromDataUri = (uri: string): string => {
+  const match = uri.match(/^data:(image\/\w+);base64,/);
+  return match ? match[1] : 'image/jpeg';
+};
+
 export function buildPriorPageParts(
   parts: any[],
   priorPages: RefPartInput[],
@@ -75,11 +85,11 @@ export function buildPriorPageParts(
 ): any[] {
   const tracked: { partIndex: number; assetId: string; label: string }[] = [];
   if (priorPages.length === 0) return tracked;
-  const groupLabel = label || '[PRIOR PAGES FROM THIS SCENE — match art style and environment. Character appearances below take precedence over these pages.]';
+  const groupLabel = label || '[PRIOR PAGE CONTINUITY REFERENCE: Use this only for continuity of recurring character appearance, environment, lighting feel, palette, and overall art style. Do not copy prior-page dialogue, captions, balloons, signs, sound effects, panel layout, panel count, camera angles, or story action unless explicitly requested in the current page prompt.]';
   parts.push({ text: groupLabel });
   priorPages.forEach((page, i) => {
     const imgIndex = parts.length;
-    parts.push({ inlineData: { mimeType: 'image/png', data: toBase64(page.dataUri) } });
+    parts.push({ inlineData: { mimeType: mimeTypeFromDataUri(page.dataUri), data: toBase64(page.dataUri) } });
     parts.push({ text: `[Prior page ${i + 1}]` });
     tracked.push({ partIndex: imgIndex, assetId: page.assetId, label: page.label });
   });
@@ -93,11 +103,11 @@ export function buildCharacterRefParts(
   const tracked: { partIndex: number; assetId: string; label: string }[] = [];
   for (const ref of characterRefs) {
     const labelText = ref.isCharacter
-      ? `[CHARACTER REFERENCE: ${ref.label} — this character must appear exactly as shown in all panels. Same face, same hair colour, same build. Do not alter their appearance.]`
+      ? `[CHARACTER REFERENCE: ${ref.label} — Whenever this character appears, render them exactly as shown in the attached reference. Do not add this character to panels where they are not staged or requested. Same face, same hair colour, same build. Do not alter their appearance.]`
       : `[VISUAL REFERENCE: ${ref.label}${ref.description ? ` — ${ref.description}` : ''}]`;
     parts.push({ text: labelText });
     const imgIndex = parts.length;
-    parts.push({ inlineData: { mimeType: 'image/png', data: toBase64(ref.dataUri) } });
+    parts.push({ inlineData: { mimeType: mimeTypeFromDataUri(ref.dataUri), data: toBase64(ref.dataUri) } });
     tracked.push({ partIndex: imgIndex, assetId: ref.assetId, label: ref.label });
   }
   return tracked;

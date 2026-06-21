@@ -4,7 +4,7 @@ import { useWorkbenchSelection } from './workbench/useWorkbenchSelection';
 import { getImageVersionsForShow, getIssueManifest, getProductionPagesForIssue } from '../storage/VaultStorage';
 import { runIssueGeneration, IssueGenProgress } from '../hooks/production/runIssueGeneration';
 import { estimateIssueImages, estimateShow } from '../vps/estimateRun';
-import { ImageVersion, PreflightWarning } from '../types/production';
+import { ImageVersion, PreflightWarning, PageBeat } from '../types/production';
 import { resolveCanonicalCharacters, getSpeakerDisplayLabel, getSpeakerClassification } from '../domainUtils';
 import { WorkbenchFilmstrip } from './workbench/WorkbenchFilmstrip';
 import { WorkbenchPageImage } from './workbench/WorkbenchPageImage';
@@ -18,6 +18,9 @@ import { resolveProductionCharacterRefs } from '../hooks/production/productionCh
 import { loadPageBeatLockedRefs, loadPriorPageRefs, loadSettingAnchorRef } from '../hooks/production/productionPageRefs';
 import { WorkbenchPromptPanel } from './workbench/WorkbenchPromptPanel';
 import { getProductionPageStatus } from '../utils/productionStatus';
+import { pageBeatToComicBeat, findPageBeatByUid } from '../hooks/production/useProductionPageActions';
+import { planBeatVisuals } from '../ai/textGeneration/planBeatVisuals';
+import { DialogueRecoveryModal } from './DialogueRecoveryModal';
 
 export const SceneWorkbench: React.FC = () => {
   const { state, dispatch } = useStore();
@@ -27,6 +30,216 @@ export const SceneWorkbench: React.FC = () => {
   const [preflightChecking, setPreflightChecking] = useState(false);
   const [preflightChecked, setPreflightChecked] = useState(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  // DA-108: Dialogue Speaker Recovery modal toggle
+  const [isDialogueRecoveryOpen, setIsDialogueRecoveryOpen] = useState(false);
+  const [cooldownMinutes, setCooldownMinutes] = useState(0); // DA-099: bulk self-throttle (minutes between pages)
+
+  // DA-106: live ref tracking the latest currentShow, kept in sync via the
+  // effect below. handleFillPanelPlans awaits across multiple iterations and
+  // must rebuild from the CURRENT store state each time, not the value
+  // captured when the loop started — same pattern as stageLines.ts /
+  // stageShow.ts (liveShowRef), used for the same reason.
+  const liveShowRef = useRef(currentShow);
+  useEffect(() => { liveShowRef.current = currentShow; }, [currentShow]);
+
+  // DA-104: bulk panel plan fill — generates missing panel plans for all
+  // pages in the current issue using Flash (fast, cheap text model).
+  const [isPlanFillRunning, setIsPlanFillRunning] = useState(false);
+  const [planFillProgress, setPlanFillProgress] = useState<{ done: number; total: number; address: string } | null>(null);
+  const planFillAbortRef = useRef(false);
+
+  const handleFillPanelPlans = async () => {
+    if (!currentShow || !selectedIssueUid) return;
+
+    // Collect all pageBeats in the current issue that have no panel plan.
+    const targets: { pageBeat: PageBeat; sceneShim: any }[] = [];
+    for (const iss of currentShow.issues ?? []) {
+      if (iss.uid !== selectedIssueUid) continue;
+      for (const act of iss.acts) {
+        for (const sc of act.scenes) {
+          for (const pb of sc.pageBeats) {
+            if (!pb.panelPlans || pb.panelPlans.length === 0) {
+              targets.push({
+                pageBeat: pb,
+                sceneShim: { id: sc.uid, fid: sc.uid, title: sc.title, setting: sc.setting, settingAnchorId: (sc as any).settingAnchorId },
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (targets.length === 0) {
+      dispatch({ type: 'ADD_TOAST', toast: { id: Date.now().toString(), type: 'success', message: 'All pages in this issue already have panel plans.' } });
+      return;
+    }
+
+    setIsPlanFillRunning(true);
+    planFillAbortRef.current = false;
+
+    for (let i = 0; i < targets.length; i++) {
+      if (planFillAbortRef.current) break;
+      const { pageBeat: pb, sceneShim } = targets[i];
+      setPlanFillProgress({ done: i, total: targets.length, address: pb.address ?? pb.uid });
+      try {
+        // DA-106: re-derive the beat to plan from the LIVE show, not the
+        // captured one — its script/etc. may have changed since the loop
+        // started, and more importantly the write below must build on top
+        // of the latest store state, not a frozen snapshot.
+        const liveShow = liveShowRef.current;
+        if (!liveShow) break;
+        const livePb = findPageBeatByUid(liveShow, pb.uid) ?? pb;
+        const shimBeat = pageBeatToComicBeat(livePb);
+        // DA-104: always Flash for panel plans — structured JSON, cheap task.
+        const { panels, props } = await planBeatVisuals(liveShow, shimBeat, sceneShim, 'free');
+        if (panels && panels.length > 0) {
+          // DA-106: rebuild from liveShowRef.current (post-await, post-previous-
+          // dispatch state), not the closure's currentShow — fixes a stale-
+          // closure bug where each write erased every prior write in the loop.
+          const baseShow = liveShowRef.current ?? liveShow;
+          const updatedIssues = (baseShow.issues ?? []).map(iss => ({
+            ...iss,
+            acts: iss.acts.map(act => ({
+              ...act,
+              scenes: act.scenes.map(sc => ({
+                ...sc,
+                pageBeats: sc.pageBeats.map(existing =>
+                  existing.uid === pb.uid
+                    ? { ...existing, panelPlans: panels, panelProps: props, panelPlanStale: false }
+                    : existing
+                ),
+              })),
+            })),
+          }));
+          dispatch({ type: 'UPDATE_SHOW', updates: { issues: updatedIssues } });
+        }
+      } catch (e: any) {
+        dispatch({ type: 'ADD_TOAST', toast: { id: Date.now().toString(), type: 'error', message: `Panel plan failed for ${pb.address ?? pb.uid}: ${e.message}` } });
+      }
+      // 1.5s cooldown between calls — Flash is fast but don't hammer the API.
+      if (i < targets.length - 1 && !planFillAbortRef.current) {
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    setIsPlanFillRunning(false);
+    setPlanFillProgress(null);
+    if (!planFillAbortRef.current) {
+      dispatch({ type: 'ADD_TOAST', toast: { id: Date.now().toString(), type: 'success', message: `Panel plans filled for ${targets.length} page${targets.length !== 1 ? 's' : ''}.` } });
+    }
+  };
+
+  // DA-105: bulk character resolution — walks every pageBeat in the current
+  // issue, derives characterIds from script line handles and panel plan
+  // characterPositions, resolves them against the show roster, and writes
+  // the result back. Pure local operation, no AI call, no cooldown needed.
+  const handleResolveCharacters = () => {
+    if (!currentShow || !selectedIssueUid) return;
+    let updated = 0;
+    const updatedIssues = (currentShow.issues ?? []).map(iss => {
+      if (iss.uid !== selectedIssueUid) return iss;
+      return {
+        ...iss,
+        acts: iss.acts.map(act => ({
+          ...act,
+          scenes: act.scenes.map(sc => ({
+            ...sc,
+            pageBeats: sc.pageBeats.map(pb => {
+              const handles = new Set<string>();
+              // From script lines
+              const lines = pb.script?.lines ?? pb.script?.entries ?? [];
+              for (const line of lines) {
+                if (line.characterHandle) handles.add(line.characterHandle);
+              }
+              // From panel plan characterPositions
+              for (const panel of pb.panelPlans ?? []) {
+                for (const cp of panel.characterPositions ?? []) {
+                  if (cp.characterHandle) handles.add(cp.characterHandle);
+                }
+              }
+              if (handles.size === 0) return pb;
+              const res = resolveCanonicalCharacters(currentShow, Array.from(handles));
+              const ids = res.resolvedCharacters.map(c => c.id);
+              if (ids.length === 0) return pb;
+              // Merge with existing — don't clobber manually assigned ids
+              const merged = Array.from(new Set([...(pb.characterIds ?? []), ...ids]));
+              if (merged.length === (pb.characterIds ?? []).length &&
+                  merged.every(id => (pb.characterIds ?? []).includes(id))) return pb;
+              updated++;
+              return { ...pb, characterIds: merged };
+            }),
+          })),
+        })),
+      };
+    });
+    dispatch({ type: 'UPDATE_SHOW', updates: { issues: updatedIssues } });
+    dispatch({ type: 'ADD_TOAST', toast: {
+      id: Date.now().toString(), type: 'success',
+      message: updated > 0
+        ? `Character IDs resolved on ${updated} page${updated !== 1 ? 's' : ''}.`
+        : 'All pages already have character IDs \u2014 nothing to update.',
+    }});
+  };
+
+  // DA-107: assign a real character (or non-character voice) to a single
+  // script line by fid. Bypasses the global unresolvedSpeakerMapping table
+  // entirely — that table maps ONE raw string to ONE target and can't
+  // disambiguate cases where the same placeholder ("UNKNOWN") was used for
+  // multiple different actual speakers on the same page. Writes directly to
+  // the line's own characterHandle, which every resolver in the app already
+  // reads as the source of truth.
+  const assignLineSpeaker = (entryFid: string, value: string) => {
+    if (!focusedPage || !value) return;
+    const script: any = focusedPage.pageBeat.script || {};
+    const rawEntries = script.entries?.length ? script.entries : (script.lines ?? []);
+    const newEntries = rawEntries.map((e: any) => {
+      if (e.fid !== entryFid) return e;
+      if (value === '__nonCharacterVoice__') {
+        return { ...e, speakerClassification: 'nonCharacterVoice' };
+      }
+      const char = (currentShow?.characters ?? []).find(c => c.id === value);
+      if (!char) return e;
+      const { speakerClassification, ...rest } = e;
+      return {
+        ...rest,
+        characterHandle: char.handle || `@${char.id}`,
+        speakerName: char.name || char.handle,
+      };
+    });
+    actions.updatePageBeat({
+      script: { ...script, entries: newEntries },
+    });
+  };
+
+  // DA-107: per-line speaker picker. Always shown — getSpeakerClassification
+  // already calls a line "resolvedCharacter" once its raw handle has a global
+  // mapping entry, even though that mapping can't be right for every line
+  // sharing the same placeholder, so the computed classification can't be
+  // trusted to decide when this is needed.
+  const renderSpeakerPicker = (entry: any) => {
+    const currentHandle = (entry.characterHandle || '').trim();
+    const matchedChar = (currentShow?.characters ?? []).find(c =>
+      c.handle && c.handle.toLowerCase() === currentHandle.toLowerCase()
+    );
+    const selectValue = entry.speakerClassification === 'nonCharacterVoice'
+      ? '__nonCharacterVoice__'
+      : (matchedChar?.id ?? '');
+    return (
+      <select
+        value={selectValue}
+        onChange={(e) => assignLineSpeaker(entry.fid, e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        className="bg-black border border-white/20 text-white/80 text-[10px] rounded px-1.5 py-1 outline-none cursor-pointer hover:border-white/40 focus:border-amber-500/50 select-none max-w-[150px]"
+        title="Assign the actual speaker for this line"
+      >
+        <option value="">-- Assign speaker --</option>
+        {(currentShow?.characters ?? []).map(c => (
+          <option key={c.id} value={c.id}>{c.name || c.handle}</option>
+        ))}
+        <option value="__nonCharacterVoice__">Non-character voice</option>
+      </select>
+    );
+  };
 
   const promotedIssues = useMemo(() => {
     return currentShow ? (currentShow.issues ?? []) : [];
@@ -163,10 +376,13 @@ export const SceneWorkbench: React.FC = () => {
     focusNextSceneFirstPage,
   } = useWorkbenchSelection(currentShow ?? undefined, selectedIssueUid, imageVersionsByPage);
 
+  const [continuity, setContinuity] = useState(false);
+
   const actions = useProductionPageActions(
     focusedPage ? focusedPage.productionPage : null,
     focusedPage ? focusedPage.pageBeat : null,
-    focusedPage ? focusedPage.settingAnchorId : undefined
+    focusedPage ? focusedPage.settingAnchorId : undefined,
+    continuity
   );
 
   const [isEditorCollapsibleOpen, setIsEditorCollapsibleOpen] = useState(true);
@@ -179,10 +395,22 @@ export const SceneWorkbench: React.FC = () => {
 
   const focusedPageActiveVersion = focusedPage?.activeImageVersion;
 
+  // DA-103: lets you preview any draft (newest, oldest, whatever) without
+  // that preview counting as approval. Resets whenever the focused page
+  // changes so a stale preview from a different page never carries over.
+  const [previewVersionUid, setPreviewVersionUid] = useState<string | null>(null);
+  useEffect(() => {
+    setPreviewVersionUid(null);
+  }, [focusedPage?.productionPage.uid]);
+
+  const displayedVersion = useMemo(() => {
+    if (!previewVersionUid) return focusedPageActiveVersion ?? null;
+    return focusedPageVersions.find(v => v.uid === previewVersionUid) ?? focusedPageActiveVersion ?? null;
+  }, [previewVersionUid, focusedPageVersions, focusedPageActiveVersion]);
+
   // DA-082: resolve reference counts for the live prompt preview.
   const [promptRefCounts, setPromptRefCounts] = useState(
     { characterRefs: 0, settingRefs: 0, lockedRefs: 0, priorPages: 0 });
-  const [continuity, setContinuity] = useState(false);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -194,7 +422,8 @@ export const SceneWorkbench: React.FC = () => {
       const refResolution = await resolveProductionCharacterRefs({ pageBeat: pb, show: currentShow });
       const [lockedRefs, priorRefs, settingRef] = await Promise.all([
         loadPageBeatLockedRefs(pb, focusedPage.settingAnchorId, currentShow),
-        continuity ? loadPriorPageRefs(focusedPage.productionPage, currentShow) : Promise.resolve([]),
+        // DA-102: previous page only — matches the real generation call.
+        continuity ? loadPriorPageRefs(focusedPage.productionPage, currentShow, 1, 0) : Promise.resolve([]),
         loadSettingAnchorRef(focusedPage.settingAnchorId, currentShow),
       ]);
       if (cancelled) return;
@@ -521,7 +750,8 @@ export const SceneWorkbench: React.FC = () => {
           skipApproved: true,
           signal: issueGenAbort.current.signal,
           onProgress: setIssueGenProgress,
-          dispatch
+          dispatch,
+          cooldownMinutes
         }
       );
       dispatch({
@@ -645,6 +875,7 @@ export const SceneWorkbench: React.FC = () => {
             skipApproved: true,
             skipExisting: true,
             signal: issueGenAbort.current.signal,
+            cooldownMinutes,
             onProgress: (prog) => {
               setIssueGenProgress({
                 ...prog,
@@ -770,7 +1001,7 @@ export const SceneWorkbench: React.FC = () => {
           )}
 
           {!issueGenRunning ? (
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <button
                 onClick={() => handleGenerateIssue()}
                 className="px-3 py-1.5 text-[11px] font-bold rounded bg-sky-600/20 border border-sky-500/30 text-sky-300 hover:bg-sky-600/30 transition-colors cursor-pointer"
@@ -782,6 +1013,58 @@ export const SceneWorkbench: React.FC = () => {
                 className="px-3 py-1.5 text-[11px] font-bold rounded bg-purple-600/20 border border-purple-500/30 text-purple-300 hover:bg-purple-600/30 transition-colors cursor-pointer"
               >
                 Generate All Issues
+              </button>
+              {/* DA-099: bulk self-throttle */}
+              <label className="flex items-center gap-1 text-[10px] text-white/50 ml-1">
+                <span>cooldown</span>
+                <input type="number" min={0} step={1} value={cooldownMinutes}
+                  onChange={e => setCooldownMinutes(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-12 px-1 py-0.5 rounded bg-black/30 border border-white/15 text-white/80 text-[10px] text-center outline-none focus:border-amber-500/40"
+                  title="Minutes to wait between page generations during a bulk run (0 = no wait)" />
+                <span>min</span>
+              </label>
+              {/* DA-104: fill missing panel plans for the current issue */}
+              {!isPlanFillRunning ? (
+                <button
+                  onClick={handleFillPanelPlans}
+                  disabled={!selectedIssueUid}
+                  className="px-3 py-1.5 text-[11px] font-bold rounded bg-amber-600/15 border border-amber-500/25 text-amber-300 hover:bg-amber-600/25 disabled:opacity-40 transition-colors cursor-pointer ml-1"
+                  title="Generate panel plans for all pages in this issue that are missing one (Flash model, ~1.5s between pages)"
+                >
+                  Fill Panel Plans
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 ml-1">
+                  <span className="text-[10px] text-white/60 font-mono">
+                    {planFillProgress
+                      ? `Plans ${planFillProgress.done + 1}/${planFillProgress.total} \u2014 ${planFillProgress.address}`
+                      : 'Starting\u2026'}
+                  </span>
+                  <button
+                    onClick={() => { planFillAbortRef.current = true; setIsPlanFillRunning(false); setPlanFillProgress(null); }}
+                    className="px-2 py-1 text-[10px] rounded bg-red-600/20 border border-red-500/30 text-red-300 hover:bg-red-600/30 transition-colors cursor-pointer"
+                  >
+                    Stop
+                  </button>
+                </div>
+              )}
+              {/* DA-105: resolve character IDs from script + panel plans for current issue */}
+              <button
+                onClick={handleResolveCharacters}
+                disabled={!selectedIssueUid}
+                className="px-3 py-1.5 text-[11px] font-bold rounded bg-amber-600/15 border border-amber-500/25 text-amber-300 hover:bg-amber-600/25 disabled:opacity-40 transition-colors cursor-pointer ml-1"
+                title="Derive and write characterIds from script lines and panel plans for all pages in this issue (instant, no AI call)"
+              >
+                Resolve Characters
+              </button>
+              {/* DA-108: recover unresolved dialogue speakers from original writing-pass artifacts */}
+              <button
+                onClick={() => setIsDialogueRecoveryOpen(true)}
+                disabled={!currentShow}
+                className="px-3 py-1.5 text-[11px] font-bold rounded bg-amber-600/15 border border-amber-500/25 text-amber-300 hover:bg-amber-600/25 disabled:opacity-40 transition-colors cursor-pointer ml-1"
+                title="Match unresolved dialogue speakers (e.g. UNKNOWN) against this show's original 0.9W writing-pass artifacts"
+              >
+                Recover Speakers
               </button>
             </div>
           ) : (
@@ -807,7 +1090,7 @@ export const SceneWorkbench: React.FC = () => {
         {focusedPage ? (
           <>
             {/* Left Column: Quick Navigation Deck */}
-            <div className="flex-[3] min-w-[280px] max-w-[340px] flex flex-col border-r border-white/10 overflow-hidden bg-[#0c0d10] h-full select-none">
+            <div className="flex-[3] min-w-[280px] max-w-[340px] xl:max-w-[380px] flex flex-col border-r border-white/10 overflow-hidden bg-[#0c0d10] h-full select-none">
               <div className="p-3 border-b border-white/10 bg-black/20 flex items-center gap-2">
                 <Layers className="w-4 h-4 text-white/60" />
                 <span className="text-[10px] uppercase tracking-[0.2em] font-black text-white/70">
@@ -908,61 +1191,9 @@ export const SceneWorkbench: React.FC = () => {
                 </div>
               </div>
 
-              {/* Page Asset Versions (collapsible list of drafts) */}
-              {focusedPageVersions.length > 0 && (
-                <div className="p-3 border-t border-white/10 bg-[#0d0e11] flex flex-col gap-1.5 shrink-0 select-none">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold tracking-wider text-white/60">
-                      Page Draft Versions
-                    </span>
-                    <span className="text-[9px] bg-white/5 border border-white/10 px-1 rounded text-white/50 font-mono">
-                      {focusedPageVersions.length}
-                    </span>
-                  </div>
-                  <div className="max-h-24 overflow-y-auto space-y-1 pr-1 scrollbar-thin scrollbar-thumb-white/10">
-                    {focusedPageVersions.map((ver) => {
-                      const isActive = focusedPageActiveVersion?.uid === ver.uid;
-                      const isApproved = ver.status === 'approved';
-                      return (
-                        <div
-                          key={ver.uid}
-                          className={`flex items-center justify-between p-1.5 rounded border text-[10px]
-                            ${isActive
-                              ? 'bg-amber-400/5 border-amber-400/20 text-white'
-                              : 'bg-black/30 border-white/5 text-white/60'
-                            }`}
-                        >
-                          <span className="font-mono text-[9px] text-white">
-                            {ver.uid.slice(0, 8)} — {ver.variantType.toUpperCase()}
-                          </span>
-                          {isApproved ? (
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-1 rounded-sm">
-                                Approved
-                              </span>
-                              <button
-                                onClick={() => actions.unapproveImage(ver.uid)}
-                                disabled={actions.isRunning}
-                                className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded transition-colors cursor-pointer"
-                              >
-                                Unapprove
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => actions.approveImage(ver.uid)}
-                              disabled={actions.isRunning}
-                              className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded transition-colors cursor-pointer"
-                            >
-                              Approve
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              {/* DA-103: Page Draft Versions panel relocated above the image
+                  canvas (WorkbenchPageImage) — sorted by date, click-to-preview
+                  without approving. See that component for the replacement. */}
 
 
             </div>
@@ -1157,21 +1388,82 @@ export const SceneWorkbench: React.FC = () => {
                 {/* Primary split-screen panel: Prompt Preview on Left, Page Canvas on Right */}
                 <div className="flex-1 min-h-0 flex flex-row overflow-hidden relative">
                   {/* Left Prompt preview panel (DA-082) */}
-                  <div className="flex-1 min-w-[320px] max-w-[420px] h-full flex flex-col">
+                  <div className="flex-1 min-w-[320px] max-w-[420px] lg:max-w-[480px] xl:max-w-[540px] h-full flex flex-col">
                     <WorkbenchPromptPanel
                       show={currentShow}
                       pageBeat={focusedPage.pageBeat}
                       page={focusedPage.productionPage}
-                      activeVersion={focusedPage.activeImageVersion}
+                      activeVersion={displayedVersion}
                       refCounts={promptRefCounts}
                       continuity={continuity}
                       onToggleContinuity={setContinuity}
+                      settingAnchorId={focusedPage.settingAnchorId}
                     />
                   </div>
                   {/* Right Canvas */}
                   <div className="flex-1 h-full min-w-0 flex flex-col relative">
+                    {/* DA-103: Page Draft Versions horizontal strip — sorted newest-first, click to preview/unapprove/approve */}
+                    {focusedPageVersions.length > 0 && (
+                      <div className="px-3 py-1.5 bg-[#0d0e11] border-b border-white/10 flex items-center justify-between gap-3 shrink-0 select-none font-sans w-full">
+                        <div className="flex items-center gap-2 overflow-x-auto flex-grow">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-white/50 shrink-0">
+                            Drafts:
+                          </span>
+                          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin scrollbar-thumb-white/10 py-0.5 flex-grow">
+                            {[...focusedPageVersions]
+                              .sort((a, b) => b.createdAt - a.createdAt)
+                              .map((ver) => {
+                                const isShown = displayedVersion?.uid === ver.uid;
+                                const isApproved = ver.status === 'approved';
+                                const isDefault = focusedPageActiveVersion?.uid === ver.uid;
+                                const label = new Date(ver.createdAt).toLocaleString(undefined, {
+                                  month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                                });
+                                return (
+                                  <button
+                                    key={ver.uid}
+                                    type="button"
+                                    onClick={() => setPreviewVersionUid(ver.uid)}
+                                    title={`${ver.uid} — ${ver.variantType}`}
+                                    className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[9.5px] font-mono whitespace-nowrap cursor-pointer shrink-0 transition-colors
+                                      ${isShown
+                                        ? 'bg-amber-400/10 border-amber-400/40 text-white'
+                                        : 'bg-black/30 border-white/10 text-white/55 hover:bg-white/5 hover:text-white/80'}`}
+                                  >
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isApproved ? 'bg-emerald-400' : 'bg-white/30'}`} />
+                                    <span>{label}</span>
+                                    {isDefault && <span className="text-white/35">(active)</span>}
+                                    {isApproved ? (
+                                      <span
+                                        role="button"
+                                        onClick={(e) => { e.stopPropagation(); actions?.unapproveImage(ver.uid); }}
+                                        className="text-amber-400 hover:text-amber-300 font-bold uppercase tracking-wider ml-1 cursor-pointer text-[9px] hover:underline"
+                                      >Unapprove</span>
+                                    ) : (
+                                      <span
+                                        role="button"
+                                        onClick={(e) => { e.stopPropagation(); actions?.approveImage(ver.uid); }}
+                                        className="text-emerald-400 hover:text-emerald-300 font-bold uppercase tracking-wider ml-1 cursor-pointer text-[9px] hover:underline"
+                                      >Approve</span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                          </div>
+                        </div>
+                        {displayedVersion?.uid && displayedVersion.uid !== focusedPageActiveVersion?.uid && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewVersionUid(null)}
+                            className="text-[9.5px] font-mono uppercase tracking-wider text-white/40 hover:text-white/70 px-2 py-1 shrink-0 cursor-pointer border border-white/10 rounded bg-white/5 hover:bg-white/10 transition-all"
+                          >
+                            ← back to active
+                          </button>
+                        )}
+                      </div>
+                    )}
                     <WorkbenchPageImage
-                      entry={focusedPage.activeImageVersion}
+                      entry={displayedVersion}
                       productionPageUid={focusedPage.productionPage.uid}
                       actions={actions}
                       page={focusedPage.productionPage}
@@ -1191,7 +1483,7 @@ export const SceneWorkbench: React.FC = () => {
             </div>
 
             {/* Right Column: Narrative Detail Deck */}
-            <div className="flex-[4] min-w-[280px] max-w-[420px] border-l border-white/10 bg-[#0d0e11] flex flex-col h-full overflow-hidden text-white">
+            <div className="flex-[5] min-w-[280px] max-w-[420px] lg:max-w-[480px] xl:max-w-[540px] border-l border-white/10 bg-[#0d0e11] flex flex-col h-full overflow-hidden text-white">
               
               {/* Tab Header Selector */}
               <div className="border-b border-white/10 bg-black/25 flex items-stretch shrink-0 h-10 select-none">
@@ -1330,10 +1622,14 @@ export const SceneWorkbench: React.FC = () => {
                                         </span>
                                       </div>
                                       
-                                      {/* Small diagnostic chip */}
-                                      <span className={`text-[9px] px-1.5 py-0.2 rounded-xs font-mono uppercase tracking-wider ${chipClass}`}>
-                                        {chipLabel}
-                                      </span>
+                                      <div className="flex items-center gap-1.5 shrink-0">
+                                        {/* DA-107: per-line speaker assignment, independent of the global map */}
+                                        {renderSpeakerPicker(entry)}
+                                        {/* Small diagnostic chip */}
+                                        <span className={`text-[9px] px-1.5 py-0.2 rounded-xs font-mono uppercase tracking-wider ${chipClass}`}>
+                                          {chipLabel}
+                                        </span>
+                                      </div>
                                     </div>
                                     <p className="text-xs text-white/90 leading-relaxed font-sans">
                                       {entry.text}
@@ -1640,6 +1936,12 @@ export const SceneWorkbench: React.FC = () => {
           onCancel={workbenchConfirm.onCancel}
         />
       )}
+
+      {/* DA-108: Dialogue Speaker Recovery */}
+      <DialogueRecoveryModal
+        isOpen={isDialogueRecoveryOpen}
+        onClose={() => setIsDialogueRecoveryOpen(false)}
+      />
     </div>
   );
 };

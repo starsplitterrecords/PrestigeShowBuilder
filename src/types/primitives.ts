@@ -17,36 +17,19 @@ export type WorkspaceView =
   | 'characters' 
   | 'art-dept' 
   | 'character-concepts' 
-  | 'season' 
-  | 'episode' 
-  | 'episode-detail' 
-  | 'act-detail' 
-  | 'scene-detail' 
-  | 'beat-detail' 
-  | 'draft-gallery'
   | 'issue-compiler'
-  | 'production-hub' 
   | 'teleplay'
   | 'export'
   | 'generation-log'
-  | 'text-generation-log'
   | 'workbench'
   | 'psb4-replay'
   | 'psb4'
   | 'production-audit'
-  | 'visual-planning'
-  | 'm-show-home'
-  | 'm-hierarchy'
-  | 'm-beat-review';
+  | 'visual-planning';
 
 export const FULLSCREEN_VIEWS: readonly WorkspaceView[] = [
   'workbench',
   'characters',
-  'episode-detail',
-  'act-detail',
-  'scene-detail',
-  'beat-detail',
-  'production-hub',
   'issue-compiler',
   'teleplay',
   'psb4',

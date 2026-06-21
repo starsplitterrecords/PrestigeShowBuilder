@@ -20,12 +20,13 @@ interface Props {
   refCounts: { characterRefs: number; settingRefs: number; lockedRefs: number; priorPages: number };
   continuity: boolean;
   onToggleContinuity: (v: boolean) => void;
+  settingAnchorId?: string;
 }
  
 type ViewMode = 'live' | 'sent';
  
 export function WorkbenchPromptPanel({
-  show, pageBeat, page, activeVersion, refCounts, continuity, onToggleContinuity,
+  show, pageBeat, page, activeVersion, refCounts, continuity, onToggleContinuity, settingAnchorId,
 }: Props) {
   const [mode, setMode] = useState<ViewMode>('live');
   const [copied, setCopied] = useState(false);
@@ -36,13 +37,19 @@ export function WorkbenchPromptPanel({
   }, [show, pageBeat]);
  
   const preview: PagePromptPreview = useMemo(
-    () => buildPagePromptPreview(show, pageBeat.uid, refCounts, characterNames, continuity),
-    [show, pageBeat, refCounts, characterNames, continuity]
+    () => buildPagePromptPreview(show, pageBeat.uid, refCounts, characterNames, continuity, settingAnchorId),
+    [show, pageBeat, refCounts, characterNames, continuity, settingAnchorId]
   );
  
   // The exact prompt stored on the active version (post-generation truth).
+  // DA-095: prefer fullTextPrompt (style header + director note + composite —
+  // the true model input) over the bare composite, which omitted the header.
   const sentPrompt: string | null =
-    (activeVersion?.metadata && (activeVersion.metadata.prompt || activeVersion.metadata.compositePrompt)) || null;
+    (activeVersion?.metadata && (
+      activeVersion.metadata.fullTextPrompt ||
+      activeVersion.metadata.prompt ||
+      activeVersion.metadata.compositePrompt
+    )) || null;
  
   // DA-088: served-response diagnostics — distinguishes endpoint drift / degraded
   // returns from a clean Pro render when an image "suddenly looks different".
@@ -51,6 +58,28 @@ export function WorkbenchPromptPanel({
   const finishReason: string | null = md.finishReason ?? null;
   const diagShown = mode === 'sent' && (servedVersion || finishReason);
 
+  // DA-100: ground truth for "This image" — what was ACTUALLY attached to the
+  // request that produced this version, read from stored metadata, not
+  // recomputed from current page state. preview.manifest (below) is always
+  // live/current and was being shown unchanged under "This image" mode, which
+  // made it look like proof of what was sent when it wasn't tied to
+  // activeVersion at all. Prefer request.parts (full label per image, DA-095+);
+  // fall back to attachedReferenceAssetIds for versions generated before that.
+  const sentManifestItems: { assetId?: string; label: string }[] = useMemo(() => {
+    const reqParts = md.request?.parts;
+    if (Array.isArray(reqParts)) {
+      return reqParts
+        .filter((p: any) => p.kind === 'image')
+        .map((p: any) => ({ assetId: p.assetId, label: p.label || '(unlabeled image)' }));
+    }
+    const ids = md.attachedReferenceAssetIds;
+    if (Array.isArray(ids) && ids.length > 0) {
+      return ids.map((id: string) => ({ assetId: id, label: '(label unavailable — generated before request.parts was stored)' }));
+    }
+    return [];
+  }, [md]);
+  const showingSentManifest = mode === 'sent' && !!sentPrompt;
+ 
   const shownPrompt = mode === 'sent' && sentPrompt ? sentPrompt : preview.fullPrompt;
  
   const copy = () => {
@@ -100,7 +129,7 @@ export function WorkbenchPromptPanel({
           <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#7CCf6A' }}>✓ Preflight clear — ready to generate</span>
         </div>
       )}
-
+ 
       {diagShown && (
         <div className="px-3 py-1.5 border-b border-white/10 shrink-0 text-[10px] font-mono"
           style={{ color: finishReason && finishReason !== 'STOP' ? '#e9c46a' : '#7f9cf5' }}>
@@ -119,24 +148,45 @@ export function WorkbenchPromptPanel({
       {/* reference manifest */}
       <div className="border-t border-white/10 shrink-0 max-h-[34%] overflow-y-auto p-3 scrollbar-thin scrollbar-thumb-white/10 font-mono">
         <div className="text-[10px] font-black uppercase tracking-widest text-white/60 mb-2 font-mono">
-          References passed → gemini-3-pro-image
+          {showingSentManifest
+            ? `Actually attached to this image (${sentManifestItems.length})`
+            : 'References passed → gemini-3-pro-image'}
         </div>
-        {preview.manifest.length === 0 && (
-          <div className="text-[10px] text-white/30 font-mono">text-only prompt — no references</div>
+        {showingSentManifest ? (
+          <>
+            {sentManifestItems.length === 0 && (
+              <div className="text-[10px] text-white/30 font-mono">No image parts recorded on this version (text-only page, or generated before this was tracked).</div>
+            )}
+            <div className="space-y-1.5">
+              {sentManifestItems.map((m, i) => (
+                <div key={i} className="flex items-center gap-2.5 bg-black/30 border border-white/10 rounded px-2 py-1.5">
+                  <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: '#E5392B' }} />
+                  <span className="text-[11px] text-white/85">{m.label}</span>
+                  {m.assetId && <span className="text-[9.5px] text-white/35 ml-auto font-mono">{m.assetId.slice(0, 10)}…</span>}
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            {preview.manifest.length === 0 && (
+              <div className="text-[10px] text-white/30 font-mono">text-only prompt — no references</div>
+            )}
+            <div className="space-y-1.5">
+              {preview.manifest.map((m, i) => {
+                const color = m.kind === 'character' ? '#E5392B' : m.kind === 'setting' ? '#36B6C4'
+                  : m.kind === 'prior' ? '#7CCf6A' : '#9b8cff';
+                return (
+                  <div key={i} className="flex items-center gap-2.5 bg-black/30 border border-white/10 rounded px-2 py-1.5">
+                    <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: color }} />
+                    <span className="text-[11px] text-white/85">{m.label}</span>
+                    {m.detail && <span className="text-[9.5px] text-white/35 ml-auto">{m.detail}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
-        <div className="space-y-1.5">
-          {preview.manifest.map((m, i) => {
-            const color = m.kind === 'character' ? '#E5392B' : m.kind === 'setting' ? '#36B6C4'
-              : m.kind === 'prior' ? '#7CCf6A' : '#9b8cff';
-            return (
-              <div key={i} className="flex items-center gap-2.5 bg-black/30 border border-white/10 rounded px-2 py-1.5">
-                <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: color }} />
-                <span className="text-[11px] text-white/85">{m.label}</span>
-                {m.detail && <span className="text-[9.5px] text-white/35 ml-auto">{m.detail}</span>}
-              </div>
-            );
-          })}
-        </div>
  
         {/* continuity toggle — lives with the references it controls */}
         <label className="flex items-start gap-2 mt-3 cursor-pointer rounded px-2 py-2 border font-sans"
@@ -149,8 +199,8 @@ export function WorkbenchPromptPanel({
             </div>
             <div className="text-[10px] text-white/40 mt-0.5 leading-snug">
               {continuity
-                ? 'The previous approved page is attached; the prompt asks for the following page in the book.'
-                : 'Off — the previous page is not passed; this page renders on its own.'}
+                ? 'The single previous page is attached, for continuity of appearance, environment, and style only.'
+                : 'Off — no prior page is passed; this page renders on its own.'}
             </div>
           </div>
         </label>

@@ -43,26 +43,16 @@ const Breadcrumb: React.FC = () => {
   if (!currentShow) return null;
 
   // Only show breadcrumb in production/episode views where activePath is relevant
-  const validViews = ['season', 'episode', 'workbench'];
+  const validViews = ['workbench'];
   if (!validViews.includes(view)) return null;
 
   const { seasonIdx, episodeIdx, actIdx, sceneIdx, beatIdx } = activePath;
 
   const segments = [];
   
-  if (seasonIdx !== undefined) {
-    const s = currentShow.seasons[seasonIdx];
-    segments.push({ label: `Season ${s?.number || seasonIdx + 1}`, view: 'season', path: { seasonIdx, episodeIdx: undefined, actIdx: undefined, sceneIdx: undefined, beatIdx: undefined } as NodePath });
-  }
-  
-  if (episodeIdx !== undefined) {
-    const e = currentShow.seasons[seasonIdx!]?.episodes?.[episodeIdx];
-    segments.push({ label: `Episode ${e?.number || episodeIdx + 1}`, view: 'episode', path: { seasonIdx, episodeIdx, actIdx: undefined, sceneIdx: undefined, beatIdx: undefined } as NodePath });
-  }
-  
   if (actIdx !== undefined) {
     const a = currentShow.seasons[seasonIdx!]?.episodes?.[episodeIdx!]?.acts?.[actIdx];
-    segments.push({ label: `Act ${a?.number || actIdx + 1}`, view: 'episode', path: { seasonIdx, episodeIdx, actIdx, sceneIdx: undefined, beatIdx: undefined } as NodePath });
+    segments.push({ label: `Act ${a?.number || actIdx + 1}`, view: 'workbench', path: { seasonIdx, episodeIdx, actIdx, sceneIdx: 0, beatIdx: undefined } as NodePath });
   }
   
   if (sceneIdx !== undefined) {

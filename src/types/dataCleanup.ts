@@ -1,19 +1,26 @@
-
 import { Character } from "./models";
-
-export type Operation = 'roster' | 'structural' | 'prose' | 'placeholders' | 'repair-double-at';
-
+ 
+export type Operation = 'roster' | 'structural' | 'prose' | 'placeholders' | 'repair-double-at' | 'dedup-issues';
+ 
+export interface DuplicateIssueChange {
+  issueNumber: number;
+  keptUid: string;
+  keptSummary: string;     // why this copy won (acts/scenes/beats/script counts)
+  removedUid: string;
+  removedSummary: string;
+}
+ 
 export interface RepairEntry {
   characterId: string;
   oldHandle: string;
   newHandle: string;
 }
-
+ 
 export interface RepairDoubleAtResult {
   rosterRepairs: RepairEntry[];
   structuralRepairs: StructuralChange[];
 }
-
+ 
 export interface RosterChange {
   characterId: string;
   oldHandle: string;
@@ -22,20 +29,20 @@ export interface RosterChange {
   needsManualReview: boolean;
   duplicateOf?: string;
 }
-
+ 
 export interface StructuralChange {
   path: string;
   oldValue: string;
   newValue: string;
 }
-
+ 
 export interface ProseChange {
   path: string;
   before: string;
   after: string;
   unresolvedHandles: string[];
 }
-
+ 
 export interface PlaceholderHit {
   path: string;
   value: string;

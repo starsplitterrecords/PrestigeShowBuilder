@@ -28,6 +28,7 @@
     "noEmit": true
   },
   "exclude": [
+    "src/_graveyard",
     "_graveyard",
     "node_modules"
   ]

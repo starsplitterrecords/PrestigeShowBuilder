@@ -4,7 +4,7 @@
 // buildCompositePrompt() for the string it actually sends, and the Scene
 // Workbench prompt panel calls buildPagePromptPreview() to show that same
 // string live, before any generation. No drift between preview and dispatch.
- 
+
 import { Show } from '../../types/show';
 import {
   FinalPageBeat,
@@ -13,7 +13,8 @@ import {
   buildFinalPageBeat,
   validateFinalPage,
 } from './finalPageContract';
- 
+import { assembleComicStyleHeader } from './comicStyleHeader';
+
 // renderTextItem — moved here from generateFinalComicPage so the preview and
 // the live call share it verbatim. (Delete the copy in generateFinalComicPage
 // and import this one — see DA-082 Edit 2.)
@@ -30,10 +31,13 @@ export const renderTextItem = (t: TextRenderItem): string[] => {
       `      Render verbatim: "${t.text}"`,
     ];
   }
+
   const head = t.chained
-    ? `    - CHAINED SPEECH BALLOON for ${t.speakerName} (stacked directly below the previous balloon, same corner, NO tail):`
+    ? `    - TAILLESS JOINED SPEECH BALLOON segment for ${t.speakerName} (same speaker, connected within the same balloon group by a clean balloon bridge, NO separate tail):`
     : `    - SPEECH BALLOON for ${t.speakerName}:`;
+
   const lines = [head, `      Render verbatim: "${t.text}"`];
+
   if (!t.chained) {
     const declared = t.speakerZone
       ? ` (declared position: ${t.speakerZone} ${t.speakerDepth ?? ''})`.trimEnd() + ')'
@@ -44,24 +48,19 @@ export const renderTextItem = (t: TextRenderItem): string[] => {
     );
     if (t.speakerAnchor) lines.push(`      Speaker visual: ${t.speakerAnchor}.`);
   }
+
   return lines;
 };
- 
+
 // buildCompositePrompt — the EXACT string sent to the model. Extracted verbatim
 // from generateFinalComicPage (lines 108–221). Pure function of the contract.
 export function buildCompositePrompt(contract: FinalPageBeat): string {
   const c = contract;
- 
-  // DA-085: names only. The attached portrait is the identity; descriptions
-  // are never emitted (they override the reference image).
-  const charBlock = c.characters
-    .map(ch => ch.name)
-    .join('\n');
- 
+
   const namedLine = c.characters
     .map(ch => ch.name)
     .join(', ');
- 
+
   const vd = c.visualDirection;
   const vdBlock = vd ? [
     'PAGE REGISTER (shared by all panels):',
@@ -70,9 +69,9 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
     vd.emotionalRegister ? `Register: ${vd.emotionalRegister}` : '',
     vd.environmentalDetail ? `Environmental detail: ${vd.environmentalDetail}` : '',
   ].filter(Boolean).join('\n') : '';
- 
+
   const anyDirect = c.panels.some(p => p.directAddress);
- 
+
   const panelBlocks = c.panels.map(p => {
     const L: string[] = [];
     L.push(`PANEL ${p.index + 1} — ${p.shotType}`);
@@ -106,7 +105,7 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
     }
     return L.join('\n');
   }).join('\n\n');
- 
+
   const propsBlock = (c.panelProps?.length ?? 0) > 0
     ? [
         'PROP CONTINUITY — draw these objects identically in every panel they appear. Description is the spec:',
@@ -114,25 +113,25 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
         '',
       ].join('\n')
     : '';
- 
+
   const letteringSpec = c.silentPage ? '' : [
     'LETTERING SPEC (applies to every TEXT TO RENDER item above):',
     '— Render ONLY the text listed above, character-for-character. If a balloon, caption, label, sign, or sound effect is not listed, it does not exist on this page. Never invent text.',
-    '— Speech balloons: white fill, thin black border (1px, not heavy), slightly irregular oval. Professional bold all-caps comic font, uniform line weight. NO handwriting, NO calligraphy, NO serif, NO standard sans-serif like Arial.',
-    '— Tails: slim, smooth, terminate at the speaker\'s mouth. Chained balloons stack vertically; only the last in a chain has a tail.',
-    '— Captions: rectangular boxes at the panel\'s top edge, styles as specified per item.',
-    '— FACE PROTECTION: no balloon, caption, or tail may cover any character\'s face. If text would cover a face, move it to negative space (sky, wall, shadow).',
+    '— Follow the book-wide LETTERING style from the header.',
+    '— Tails must terminate at the speaker’s mouth unless the item is marked as a joined continuation.',
+    '— Captions: rectangular boxes at the panel’s top edge, styles as specified per item.',
+    '— FACE PROTECTION: no balloon, caption, or tail may cover any character’s face. If text would cover a face, move it to negative space.',
     '— Balloons must be large enough that all text is fully legible.',
     '',
   ].join('\n');
- 
+
   const silentBlock = c.silentPage ? [
     'SILENT PAGE.',
     'This page contains no dialogue, no captions, no signage, no sound effects, and no readable text of any kind.',
     'Pure visual storytelling. Any text in the output is a failure.',
     '',
   ].join('\n') : '';
- 
+
   return [
     `FINAL COMIC PAGE — ${c.panelCount} PANEL${c.panelCount > 1 ? 'S' : ''} — LAYOUT: ${c.layoutName}`,
     'ONE PASS: artwork and lettering are produced together. The output is the finished, lettered comic page.',
@@ -142,7 +141,7 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
     'Panels are separated by thin black gutters. The full 3:4 page is the canvas.',
     '',
     c.characters.length > 0
-      ? `CHARACTERS ON THIS PAGE — the attached reference image for each named character is the single source of truth for their appearance. Match each attached portrait exactly in every panel: same face, same hair, same build, same costume. Render only what the portrait shows; do not invent or embellish features.\n${c.characters.map(ch => ch.name).join(', ')}`
+      ? `CHARACTERS ON THIS PAGE — Whenever a named character appears, the attached reference image for that character is the single source of truth for their appearance. Match the attached portrait exactly wherever that character appears: same face, same hair, same build, same costume. Do not add characters to panels where they are not staged.\n${c.characters.map(ch => ch.name).join(', ')}`
       : '',
     '',
     vdBlock,
@@ -157,8 +156,8 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
       ? '— Direct address is used only in the panel(s) marked above; all other panels keep characters engaged with the scene, not the reader.'
       : '— Characters face and engage each other and the scene, not the reader. No forward-facing direct-to-camera poses; direct address is not used on this page.',
     namedLine
-      ? `— ${namedLine}: identical appearance in every panel — same face, same costume, same build.`
-      : '— Characters: identical appearance in every panel. Same face, same costume, same build.',
+      ? `— ${namedLine}: identical appearance in every panel where they appear — same face, same costume, same build.`
+      : '— Characters: identical appearance in every panel where they appear. Same face, same costume, same build.',
     '— Lighting direction, color palette, and art style must be consistent across all panels.',
     '— Panels flow in reading order: left to right, top to bottom.',
     '',
@@ -166,15 +165,15 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
     silentBlock,
   ].filter(s => s !== null && s !== undefined).join('\n');
 }
- 
+
 // ── Live preview (no model call) ──────────────────────────────────────────
- 
+
 export interface PromptManifestItem {
   kind: 'style' | 'character' | 'setting' | 'prior';
   label: string;
   detail?: string;
 }
- 
+
 export interface PagePromptPreview {
   ok: boolean;
   blocked: boolean;            // hard preflight failure (duplicate / zero-ref / unresolved)
@@ -185,30 +184,14 @@ export interface PagePromptPreview {
   errors: string[];
   warnings: string[];
 }
- 
-// assembleComicStyleHeader is defined in generateFinalComicPage; to keep this
-// module free of the GoogleGenAI import we re-derive the header here from the
-// same comicStyle fields. (DA-082 note: if you prefer one definition, move
-// assembleComicStyleHeader into this file and import it into the generator.)
-function styleHeaderOf(show: Show): string {
-  const cs: any = show.comicStyle || {};
-  const styleBits = [
-    cs.artistStyle,
-    cs.colorPalette ? `Color palette: ${cs.colorPalette}` : '',
-    cs.lineWeight ? `Line weight: ${cs.lineWeight}` : '',
-  ].filter(Boolean).join('. ');
-  const out = [`STYLE: ${styleBits || 'professional comic book art, clean linework'}.`];
-  if (cs.compositionPrompt) out.push(`COMPOSITION: ${cs.compositionPrompt}.`);
-  if (cs.negativePrompt) out.push(`EXCLUDE: ${cs.negativePrompt}.`);
-  return out.join('\n');
-}
- 
+
 export function buildPagePromptPreview(
   show: Show,
   pageBeatUid: string,
   refCounts: { characterRefs: number; settingRefs: number; lockedRefs: number; priorPages: number },
   characterNames: string[],
-  continuity: boolean
+  continuity: boolean,
+  settingAnchorId?: string
 ): PagePromptPreview {
   const canonical = findCanonicalPageBeat(show, pageBeatUid);
   if (canonical.errors.length > 0 || !canonical.pb) {
@@ -217,13 +200,33 @@ export function buildPagePromptPreview(
       manifest: [], errors: canonical.errors.length ? canonical.errors : ['PageBeat not found.'], warnings: [],
     };
   }
+
   const { contract, problems } = buildFinalPageBeat(show, canonical.pb, canonical.issueUid, canonical.sceneUid);
   const preflight = validateFinalPage(contract, problems, refCounts);
- 
-  const styleHeader = styleHeaderOf(show);
+
+  const styleHeader = assembleComicStyleHeader(show, contract.silentPage);
   const compositePrompt = buildCompositePrompt(contract);
-  const fullPrompt = `${styleHeader}\n\n${compositePrompt}`;
- 
+
+  let settingPrefix = '';
+  if (settingAnchorId) {
+    const anchor = (show.settingAnchors ?? []).find(a => a.id === settingAnchorId);
+    if (anchor) {
+      const descParts: string[] = [];
+      if (anchor.physicalDescription) descParts.push(anchor.physicalDescription);
+      if (anchor.visualDescription) descParts.push(anchor.visualDescription);
+      if (anchor.mood) descParts.push(`Mood: ${anchor.mood}.`);
+      if (descParts.length > 0) {
+        settingPrefix = `DIRECTOR'S NOTE (PRIORITY): LOCATION — ${anchor.name}: ${descParts.join(' ')}`;
+      }
+    }
+  }
+
+  const fullPrompt = [
+    styleHeader,
+    settingPrefix,
+    compositePrompt,
+  ].filter(Boolean).join('\n\n');
+
   const manifest: PromptManifestItem[] = [];
   manifest.push({ kind: 'style', label: 'Style header', detail: 'comicStyle' });
   characterNames.forEach(n => manifest.push({ kind: 'character', label: `Character portrait: ${n}` }));
@@ -231,7 +234,7 @@ export function buildPagePromptPreview(
   if (continuity && refCounts.priorPages > 0) {
     manifest.push({ kind: 'prior', label: 'Previous page (continuity)', detail: 'following page in the book' });
   }
- 
+
   return {
     ok: preflight.ok,
     blocked: !preflight.ok,

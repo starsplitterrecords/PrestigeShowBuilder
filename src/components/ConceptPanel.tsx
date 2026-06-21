@@ -1,12 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../StoreContext';
-import { useProductionPipeline } from '../hooks/useProductionPipeline';
 import AutoResizingTextarea from './shared/AutoResizingTextarea';
 import { suggestField } from '../geminiService';
 import { 
-  Sparkles, 
   Save, 
-  RefreshCw, 
   Book, 
   FileText,
   ShieldCheck,
@@ -14,25 +11,26 @@ import {
   Info
 } from 'lucide-react';
 import { motion } from 'motion/react';
-
+ 
 const ConceptPanel: React.FC = () => {
   const { state, dispatch, save } = useStore();
   const { currentShow } = state;
-  const { run, isRunning } = useProductionPipeline();
   const [localPremise, setLocalPremise] = useState(currentShow?.premise || '');
   const [localThemes, setLocalThemes] = useState(currentShow?.themes || '');
   const [localRichInput, setLocalRichInput] = useState(currentShow?.richInput || '');
+  const [localBible, setLocalBible] = useState(currentShow?.expandedBible || '');
   const [isAutofilling, setIsAutofilling] = useState<Record<string, boolean>>({});
-
+ 
   useEffect(() => {
     if (!currentShow) return;
     setLocalPremise(currentShow.premise || '');
     setLocalThemes(currentShow.themes || '');
     setLocalRichInput(currentShow.richInput || '');
+    setLocalBible(currentShow.expandedBible || '');
   }, [currentShow?.id]);
-
+ 
   if (!currentShow) return null;
-
+ 
   const handleAutofill = async (field: 'premise' | 'themes', label: string) => {
     if (!currentShow) return;
     const key = `show-${field}`;
@@ -46,18 +44,20 @@ const ConceptPanel: React.FC = () => {
       setIsAutofilling(prev => ({ ...prev, [key]: false }));
     }
   };
-
+ 
   const isDirty =
     localPremise !== (currentShow?.premise ?? '') ||
     localThemes !== (currentShow?.themes ?? '') ||
-    localRichInput !== (currentShow?.richInput ?? '');
-
+    localRichInput !== (currentShow?.richInput ?? '') ||
+    localBible !== (currentShow?.expandedBible ?? '');
+ 
   const handleSave = async () => {
     const nextShow = {
       ...currentShow,
       premise: localPremise,
       themes: localThemes,
       richInput: localRichInput,
+      expandedBible: localBible,
       lastModified: Date.now()
     };
     dispatch({ 
@@ -65,16 +65,13 @@ const ConceptPanel: React.FC = () => {
       updates: { 
         premise: localPremise, 
         themes: localThemes,
-        richInput: localRichInput
+        richInput: localRichInput,
+        expandedBible: localBible
       } 
     });
     await save(nextShow);
   };
-
-  const handleExpand = () => {
-    run({ scope: 'show' });
-  };
-
+ 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#070707] text-white p-6 md:p-12 overflow-y-auto">
       <div className="max-w-5xl mx-auto w-full space-y-12">
@@ -109,7 +106,7 @@ const ConceptPanel: React.FC = () => {
             </button>
           </div>
         </header>
-
+ 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
           {/* LEFT COLUMN: FOUNDATION BIBLE */}
           <div className="lg:col-span-5 space-y-10">
@@ -118,7 +115,7 @@ const ConceptPanel: React.FC = () => {
                 <ShieldCheck size={14} />
                 <h2 className="text-[11px] font-black uppercase tracking-widest">Immutable Foundation</h2>
               </div>
-
+ 
               <section className="space-y-4">
                 <div className="flex items-center justify-between">
                   <label className="text-[10px] text-amber-500/60 uppercase tracking-widest font-black">Core Premise</label>
@@ -132,7 +129,7 @@ const ConceptPanel: React.FC = () => {
                   placeholder="Describe the core engine of the show..."
                 />
               </section>
-
+ 
               <section className="space-y-4">
                 <label className="text-[10px] text-amber-500/60 uppercase tracking-widest font-black">Thematic Keywords</label>
                 <AutoResizingTextarea
@@ -145,7 +142,7 @@ const ConceptPanel: React.FC = () => {
                 />
               </section>
             </div>
-
+ 
             {currentShow.initMode === 'mine' && (
               <div className="p-6 rounded-lg bg-white/5 border border-white/10 space-y-4">
                 <div className="flex items-center gap-2 text-white/60">
@@ -162,63 +159,36 @@ const ConceptPanel: React.FC = () => {
               </div>
             )}
           </div>
-
+ 
           {/* RIGHT COLUMN: REVIEW OUTLINE */}
           <div className="lg:col-span-7 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between pb-2 border-b border-white/10">
               <div className="flex items-center gap-2 text-white/60">
                 <Layout size={14} />
                 <h2 className="text-[11px] font-black uppercase tracking-widest">Review Outline</h2>
               </div>
-              
-              <button 
-                onClick={handleExpand}
-                disabled={isRunning}
-                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-black px-5 py-2.5 rounded-sm text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50 shadow-lg shadow-amber-500/10"
-              >
-                {isRunning ? (
-                  <RefreshCw size={14} className="animate-spin" />
-                ) : (
-                  <Sparkles size={14} />
-                )}
-                {currentShow.expandedBible ? 'Re-Draft Outline' : 'Generate Outline'}
-              </button>
             </div>
-
-            <div className={`relative min-h-[400px] rounded-lg border transition-all ${currentShow.expandedBible ? 'bg-white/5 border-white/10' : 'bg-white/[0.02] border-dashed border-white/20 flex items-center justify-center'}`}>
-              {currentShow.expandedBible ? (
-                <div className="p-8 text-sm text-white/80 leading-relaxed whitespace-pre-wrap font-serif">
-                  {currentShow.expandedBible}
-                </div>
-              ) : (
-                <div className="text-center space-y-4 max-w-xs">
-                  <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mx-auto">
-                    <Sparkles size={20} className="text-white/60" />
-                  </div>
-                  <p className="text-xs text-white/60 leading-relaxed">
-                    The Review Outline expands your foundation into a comprehensive world-building document.
-                  </p>
-                </div>
-              )}
-              
-              {isRunning && (
-                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center rounded-lg">
-                  <div className="flex flex-col items-center gap-4">
-                    <RefreshCw size={32} className="text-amber-500 animate-spin" />
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-500">AI Mining in Progress...</span>
-                  </div>
-                </div>
-              )}
-            </div>
+ 
+            {/* DA-090: the bible is directly authorable. Paste or write it here and
+                it becomes the show's expandedBible on Save — the downstream pipeline
+                consumes it as the source (richInput || expandedBible || premise) and
+                the concept stage skips generation when it is present. */}
+            <textarea
+              value={localBible}
+              onChange={e => setLocalBible(e.target.value)}
+              placeholder="Write or paste your show bible directly here. On Save it becomes the foundation the pipeline builds on."
+              spellCheck={false}
+              className="w-full min-h-[460px] rounded-lg border bg-white/5 border-white/10 focus:border-amber-500/40 p-8 text-sm text-white/80 leading-relaxed font-serif outline-none resize-y whitespace-pre-wrap"
+            />
             
             <div className="flex items-start gap-3 p-4 rounded-lg bg-blue-500/5 border border-blue-500/10">
               <div className="p-2 rounded bg-blue-500/20 text-blue-400">
                 <Info size={16} />
               </div>
               <div className="space-y-1">
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400">Workflow Note</h4>
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400">Wordflow Note</h4>
                 <p className="text-[11px] text-white/60 leading-relaxed">
-                  The Review Outline is used to prime character and setting generation. If you change the Foundation, you should Re-Draft the Outline to keep them in sync.
+                  The Review Outline is used to prime character and setting generation. Directly author and refine your outline above to keep them aligned.
                 </p>
               </div>
             </div>
@@ -228,5 +198,5 @@ const ConceptPanel: React.FC = () => {
     </div>
   );
 };
-
+ 
 export default ConceptPanel;

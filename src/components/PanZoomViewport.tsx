@@ -35,7 +35,7 @@ export default function PanZoomViewport({ children, designWidth = 1280, enabled 
  
  // fit scale = frame width / design width, capped at 1 (never upscale on desktop)
  const fitScale = frameSize.w > 0 ? Math.min(1, frameSize.w / designWidth) : 1;
- const isLargeScreen = frameSize.w >= designWidth;
+ const isLargeScreen = frameSize.w >= 1024;
  
  // Measure the frame.
  useEffect(() => {
@@ -152,9 +152,9 @@ export default function PanZoomViewport({ children, designWidth = 1280, enabled 
    >
      <div
        style={{
-         width: designWidth,
+         width: isLargeScreen ? '100%' : designWidth,
          height: isLargeScreen ? '100%' : `${100 / scale}%`,
-         transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+         transform: isLargeScreen ? 'none' : `translate(${tx}px, ${ty}px) scale(${scale})`,
          transformOrigin: '0 0',
          // when zoomed in, let pan take over; otherwise normal pointer behavior
          cursor: panning ? 'grab' : 'default',

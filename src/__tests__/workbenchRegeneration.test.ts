@@ -8,7 +8,7 @@ import {
   deleteImageVersionsForPage
 } from '../storage/ProductionStorage';
 import { ImageVersion } from '../types/production';
-import { placementFromSpeaker } from '../utils/prompts/planScenePages';
+import { placementFromSpeaker } from '../utils/prompts/letteringUtils';
 import { CharacterPosition } from '../types/models';
 
 describe('deleteUnapprovedVersionsForPage and clearAndRegenerate storage utilities', () => {

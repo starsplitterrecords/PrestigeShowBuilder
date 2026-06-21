@@ -95,6 +95,8 @@ DIRECTION RULES:
       'ESCALATION' | 'TRIPTYCH_H' | 'WIDE_SPLIT'
    4: 'FOUR-PANEL 2x2 GRID' | 'FOUR-PANEL FEATURE'
 
+10. DIALOGUE LEAK PREVENTION: Dialogue, captions, signs, labels, and sound effects must only appear in explicit text-render fields. Do not copy dialogue or readable text into ACTION, FOREGROUND, MIDGROUND, BACKGROUND, STAGING, visual direction, camera direction, environmental detail, or prop descriptions. Visual fields must describe only what is seen, not text to render.
+
 Return JSON only:
 \`\`\`json
 {

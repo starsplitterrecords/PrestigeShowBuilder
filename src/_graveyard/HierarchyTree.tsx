@@ -80,10 +80,9 @@ const HierarchyTree: React.FC = () => {
         return (
           <div key={season.id || `season-${sIdx}`} className="text-xs uppercase tracking-widest font-bold">
             <div 
-              className={`flex items-center justify-between cursor-pointer py-1 px-4 hover:bg-white/30 ${activePath.seasonIdx === sIdx && view === 'season' ? 'text-amber-500' : 'text-white'}`}
+              className={`flex items-center justify-between cursor-pointer py-1 px-4 hover:bg-white/30 ${activePath.seasonIdx === sIdx && view === 'workbench' ? 'text-amber-500' : 'text-white'}`}
               onClick={() => {
                 toggleSeason(sIdx);
-                navigateTo('season', { seasonIdx: sIdx, episodeIdx: undefined, actIdx: undefined, sceneIdx: undefined, beatIdx: undefined });
               }}
             >
               <div className="flex items-center">
@@ -101,10 +100,9 @@ const HierarchyTree: React.FC = () => {
             return (
               <div key={episode.id} className="ml-4">
                 <div 
-                  className={`flex items-center justify-between cursor-pointer py-1 px-4 hover:bg-white/30 ${activePath.seasonIdx === sIdx && activePath.episodeIdx === eIdx && view === 'episode' ? 'text-amber-500' : 'text-white'}`}
+                  className={`flex items-center justify-between cursor-pointer py-1 px-4 hover:bg-white/30 ${activePath.seasonIdx === sIdx && activePath.episodeIdx === eIdx && view === 'workbench' ? 'text-amber-500' : 'text-white'}`}
                   onClick={() => {
                     toggleEpisode(sIdx, eIdx);
-                    navigateTo('episode', { seasonIdx: sIdx, episodeIdx: eIdx, actIdx: undefined, sceneIdx: undefined, beatIdx: undefined });
                   }}
                 >
                   <div className="flex items-center">
@@ -141,10 +139,9 @@ const HierarchyTree: React.FC = () => {
                   return (
                     <div key={act.id} className="ml-4">
                       <div 
-                        className={`flex items-center justify-between cursor-pointer py-1 px-4 hover:bg-white/30 ${activePath.seasonIdx === sIdx && activePath.episodeIdx === eIdx && activePath.actIdx === aIdx && view === 'episode' ? 'text-amber-500' : 'text-white'}`}
+                        className={`flex items-center justify-between cursor-pointer py-1 px-4 hover:bg-white/30 ${activePath.seasonIdx === sIdx && activePath.episodeIdx === eIdx && activePath.actIdx === aIdx && view === 'workbench' ? 'text-amber-500' : 'text-white'}`}
                         onClick={() => {
                           toggleAct(sIdx, eIdx, aIdx);
-                          navigateTo('episode', { seasonIdx: sIdx, episodeIdx: eIdx, actIdx: aIdx, sceneIdx: undefined, beatIdx: undefined });
                         }}
                       >
                         <div className="flex items-center">

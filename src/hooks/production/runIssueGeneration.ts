@@ -14,6 +14,7 @@ import { generateFinalComicPage }
   from '../../ai/imageGeneration/generateFinalComicPage';
 import { loadSettingAnchorRef } from './productionPageRefs';
 import { resolveProductionCharacterRefs } from './productionCharacterRefs';
+import { buildStoredImageMetadata } from '../../ai/imageGeneration/storedImageMetadata';
 import { writeImageVersion, updateProductionPage, getImageVersionsForPage, deleteUnapprovedVersionsForPage }
   from '../../storage/ProductionStorage';
 import { AssetStorage } from '../../storage';
@@ -34,6 +35,7 @@ export interface IssueGenOptions {
   onProgress?: (p: IssueGenProgress) => void;
   signal?: AbortSignal;   // cooperative cancel
   dispatch?: (a: any) => void;
+  cooldownMinutes?: number; // DA-099: wait this many minutes between successful generations (bulk self-throttle)
 }
 
 export interface IssueGenResult {
@@ -63,6 +65,19 @@ export async function runIssueGeneration(
   const issue = (show.issues ?? []).find(i => i.uid === issueUid);
   const result: IssueGenResult = { generated: 0, skipped: 0, failed: 0 };
   if (!issue) return result;
+
+  // DA-099: cooldown between successful generations to stay well under any
+  // rate/throttle ceiling on bulk runs. Cancellable: polls the abort signal.
+  const cooldownMs = Math.max(0, (options.cooldownMinutes ?? 0)) * 60_000;
+  const cooldownWait = async (index: number, total: number) => {
+    if (cooldownMs <= 0) return;
+    const end = Date.now() + cooldownMs;
+    while (Date.now() < end) {
+      if (options.signal?.aborted) return;
+      options.onProgress?.({ index, total, pageUid: '', phase: 'generating', address: `cooldown ${Math.ceil((end - Date.now())/1000)}s` });
+      await new Promise(r => setTimeout(r, Math.min(1000, end - Date.now())));
+    }
+  };
 
   // Running continuity window — refs from pages generated in THIS run.
   const priorRefs: { dataUri: string; label: string;
@@ -172,7 +187,7 @@ export async function runIssueGeneration(
         assetId: r.assetId,
       }));
 
-      const settingPrefix = (!settingRef.imageRef && settingRef.settingNote)
+      const settingPrefix = settingRef.settingNote
         ? settingRef.settingNote + '\n' : '';
 
       // Contract + preflight (spec §4, §5, §9).
@@ -220,7 +235,7 @@ export async function runIssueGeneration(
         uid: generateUID(), showId: show.id,
         productionPageUid: page.uid, assetId: gen.assetId,
         variantType: 'final', status: 'draft', createdAt: Date.now(),
-        metadata: gen.metadata,
+        metadata: buildStoredImageMetadata(gen),
       };
       await writeImageVersion(show.id, finalVersion);
       await updateProductionPage(show.id, page.uid,
@@ -234,6 +249,11 @@ export async function runIssueGeneration(
           assetId: gen.assetId });
 
       emit('done');
+
+      // DA-099: self-throttle — pause before the next page (skip after the last).
+      if (i < total - 1 && !options.signal?.aborted) {
+        await cooldownWait(i, total);
+      }
     } catch (e) {
       result.failed++;
       emit('error', e instanceof Error ? e.message : String(e));

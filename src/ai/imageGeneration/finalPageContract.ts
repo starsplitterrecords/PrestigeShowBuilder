@@ -20,8 +20,8 @@ import {
   splitBalloonText,
   placementFromSpeaker,
   cleanLetteringText,
-} from '../../utils/prompts/planScenePages';
-import { LINE_COUNT_TO_PANEL_COUNT } from '../../utils/prompts/assembleComicPrompt';
+} from '../../utils/prompts/letteringUtils';
+import { LINE_COUNT_TO_PANEL_COUNT } from '../../utils/prompts/panelCountUtils';
  
 // ── Contract types ────────────────────────────────────────────────────
  
@@ -309,9 +309,17 @@ export function buildFinalPageBeat(
     else shotType = `MEDIUM TWO-SHOT: ${speakersInPanel.slice(0, 2).join(' and ')} in conversation.`;
  
     // Action: plan action → visualNote. NEVER quoted dialogue (spec §5).
-    const action = (ai?.action || '').trim() || (pb.visualNote || '').trim();
-    if (!action) problems.push(`Panel ${p + 1}: no action text (plan action and visualNote both empty).`);
- 
+    const rawAction = (ai?.action || '').trim() || (pb.visualNote || '').trim();
+    if (!rawAction) problems.push(`Panel ${p + 1}: no action text (plan action and visualNote both empty).`);
+
+    const dialogTexts = allEntries.map(e => cleanLetteringText(e.text ?? '').trim()).filter(Boolean);
+
+    const action = sanitizeVisualField(rawAction, dialogTexts, problems, `panel ${p + 1} action`) || 'No action text.';
+    const foreground = sanitizeVisualField(ai?.foreground, dialogTexts, problems, `panel ${p + 1} foreground`);
+    const midground = sanitizeVisualField(ai?.midground, dialogTexts, problems, `panel ${p + 1} midground`);
+    const background = sanitizeVisualField(ai?.background, dialogTexts, problems, `panel ${p + 1} background`);
+    const relationalStaging = sanitizeVisualField(ai?.relationalStaging, dialogTexts, problems, `panel ${p + 1} relational staging`);
+
     // Character positions with resolved names
     const characterPositions = (ai?.characterPositions ?? []).map((cp: any) => {
       const c = resolveCharacter(show, cp.characterHandle);
@@ -326,23 +334,23 @@ export function buildFinalPageBeat(
         inResponseTo: cp.inResponseTo,
       };
     });
- 
+
     panels.push({
       index: p,
       shotType,
       action,
-      foreground: ai?.foreground,
-      midground: ai?.midground,
-      background: ai?.background,
-      relationalStaging: ai?.relationalStaging,
+      foreground,
+      midground,
+      background,
+      relationalStaging,
       directAddress: ai?.directAddress === true || ai?.directAddress === 'True',
       characterPositions,
       text,
     });
   }
- 
+
   const silentPage = panels.every(pl => pl.text.length === 0);
- 
+
   const contract: FinalPageBeat = {
     pageBeatUid: pb.uid,
     address: pb.address,
@@ -358,6 +366,45 @@ export function buildFinalPageBeat(
     panels,
   };
   return { contract, problems };
+}
+
+function sanitizeVisualField(
+  fieldValue: string | undefined,
+  dialogueTexts: string[],
+  problems: string[],
+  fieldName: string
+): string | undefined {
+  if (!fieldValue) return fieldValue;
+  let next = fieldValue;
+
+  for (const text of dialogueTexts) {
+    if (text.length < 4) continue; // Skip short sentences/words
+
+    const quotedVariants = [
+      `"${text}"`,
+      `'${text}'`,
+      `“${text}”`,
+      `‘${text}’`,
+    ];
+
+    for (const qv of quotedVariants) {
+      if (next.includes(qv)) {
+        problems.push(
+          `Warning: Dialogue content ${qv} was found inside visual field "${fieldName}". Strip/clean applied to maintain visual/text consistency.`
+        );
+        next = next.replace(qv, '').trim();
+      }
+    }
+
+    if (next.toLowerCase().trim() === text.toLowerCase().trim()) {
+      problems.push(
+        `Warning: Visual field "${fieldName}" matches dialogue verbatim: "${text}". Stripped to prevent text leakage.`
+      );
+      next = '';
+    }
+  }
+
+  return next;
 }
  
 // ── Preflight validation (spec §9) — errors block, warnings log ───────
@@ -399,33 +446,20 @@ export function validateFinalPage(
     }
   }
  
-  // DA-087: speak ⇒ staged. A character who has a balloon/caption on this page
-  // but is not positioned in ANY panel is an off-screen speaker. The model
-  // cannot render off-panel voices reliably, so rather than attach their
-  // portrait as an ungoverned subject (which produces a random body — the
-  // "old man" failure), block generation and make the data honest: stage the
-  // speaker or reassign the line.
+  // Every speaker must be staged in the exact panel where they speak.
   if (!contract.silentPage) {
-    const stagedNames = new Set<string>();
     for (const p of contract.panels) {
+      const stagedInPanel = new Set<string>();
       for (const cp of p.characterPositions) {
-        if (cp.name) stagedNames.add(cp.name);
+        if (cp.name) stagedInPanel.add(cp.name);
       }
-    }
-    const unstagedSpeakers = new Set<string>();
-    for (const p of contract.panels) {
       for (const t of p.text) {
-        if (t.kind === 'balloon' && t.speakerName && !stagedNames.has(t.speakerName)) {
-          unstagedSpeakers.add(t.speakerName);
+        if (t.kind === 'balloon' && t.speakerName) {
+          if (!stagedInPanel.has(t.speakerName)) {
+            errors.push(`Panel ${p.index + 1}: speech item for "${t.speakerName}" exists, but that character is not staged in this panel.`);
+          }
         }
       }
-    }
-    for (const name of unstagedSpeakers) {
-      errors.push(
-        `${name} speaks on this page but is not positioned in any panel. ` +
-        `Stage ${name} in the panel where they speak, or reassign the line — ` +
-        `off-panel voices are not supported.`
-      );
     }
   }
 
