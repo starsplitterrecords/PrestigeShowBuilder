@@ -1,3 +1,8 @@
+// comicStyleHeader.ts — DA-114
+// DA-114: LETTERING removed from this header. It now appears as a single
+// consolidated LETTERING SPEC block at the bottom of buildCompositePrompt,
+// immediately before STYLE, so the model reads it adjacent to the text it
+// governs rather than at the top of a multi-section prompt it hasn't parsed yet.
 import { Show } from '../../types/show';
 
 export const DEFAULT_LETTERING_STYLE =
@@ -10,16 +15,8 @@ export function sanitizeNegativePromptForFinalComicPage(
   if (silentPage) return negativePrompt;
 
   const banned = [
-    'text',
-    'letters',
-    'lettering',
-    'words',
-    'captions',
-    'speech balloons',
-    'speech bubbles',
-    'title',
-    'logo',
-    'typography',
+    'text', 'letters', 'lettering', 'words', 'captions',
+    'speech balloons', 'speech bubbles', 'title', 'logo', 'typography',
   ];
 
   return negativePrompt
@@ -32,6 +29,9 @@ export function sanitizeNegativePromptForFinalComicPage(
     .join(', ');
 }
 
+// DA-114: Style only — no LETTERING block here.
+// LETTERING is emitted once, in buildCompositePrompt's closing section,
+// adjacent to the TEXT TO RENDER items it governs.
 export function assembleComicStyleHeader(show: Show, silentPage: boolean = false): string {
   const cs = (show.comicStyle || {}) as any;
 
@@ -43,15 +43,10 @@ export function assembleComicStyleHeader(show: Show, silentPage: boolean = false
 
   const out = [`STYLE: ${styleBits || 'professional comic book art, clean linework'}.`];
 
-  const letteringStyle = cs.letteringStyle || DEFAULT_LETTERING_STYLE;
-  out.push(`LETTERING: ${letteringStyle}`);
-
   if (cs.compositionPrompt) out.push(`COMPOSITION: ${cs.compositionPrompt}.`);
   if (cs.negativePrompt) {
     const sanitized = sanitizeNegativePromptForFinalComicPage(cs.negativePrompt, silentPage);
-    if (sanitized) {
-      out.push(`EXCLUDE: ${sanitized}.`);
-    }
+    if (sanitized) out.push(`EXCLUDE: ${sanitized}.`);
   }
 
   return out.join('\n');

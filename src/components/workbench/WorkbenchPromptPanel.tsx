@@ -15,21 +15,25 @@ interface Props {
   show: Show;
   pageBeat: PageBeat;
   page: ProductionPage;
-  activeVersion?: ImageVersion | null;   // when present, show the EXACT prompt that produced it
-  // live ref counts already resolved by the workbench preflight; pass through
+  activeVersion?: ImageVersion | null;
   refCounts: { characterRefs: number; settingRefs: number; lockedRefs: number; priorPages: number };
   continuity: boolean;
   onToggleContinuity: (v: boolean) => void;
   settingAnchorId?: string;
+  // DA-115: escape hatch — generate from a hand-written prompt, bypassing the
+  // assembler. Character refs and style header are still attached.
+  onGenerateRaw?: (rawPrompt: string) => void;
 }
  
-type ViewMode = 'live' | 'sent';
+type ViewMode = 'live' | 'sent' | 'raw';
  
 export function WorkbenchPromptPanel({
-  show, pageBeat, page, activeVersion, refCounts, continuity, onToggleContinuity, settingAnchorId,
+  show, pageBeat, page, activeVersion, refCounts, continuity, onToggleContinuity, settingAnchorId, onGenerateRaw,
 }: Props) {
   const [mode, setMode] = useState<ViewMode>('live');
   const [copied, setCopied] = useState(false);
+  const [rawPrompt, setRawPrompt] = useState('');
+  const [isGeneratingRaw, setIsGeneratingRaw] = useState(false);
  
   const characterNames = useMemo(() => {
     const res = resolveCanonicalCharacters(show, pageBeat.characterIds ?? []);
@@ -96,18 +100,25 @@ export function WorkbenchPromptPanel({
         <span className="text-[10px] font-black uppercase tracking-widest text-white/80 font-mono">Assembled prompt</span>
         <span className="text-[9px] uppercase tracking-wider text-white/35 font-mono">exactly what is sent</span>
         <div className="flex-1" />
-        {sentPrompt && (
-          <div className="flex rounded overflow-hidden border border-white/10">
-            <button
-              onClick={() => setMode('live')}
-              className={`px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider cursor-pointer ${mode === 'live' ? 'bg-white/15 text-white' : 'text-white/40 hover:text-white/70'}`}
-            >Live</button>
+        <div className="flex rounded overflow-hidden border border-white/10">
+          <button
+            onClick={() => setMode('live')}
+            className={`px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider cursor-pointer ${mode === 'live' ? 'bg-white/15 text-white' : 'text-white/40 hover:text-white/70'}`}
+          >Live</button>
+          {sentPrompt && (
             <button
               onClick={() => setMode('sent')}
               className={`px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider cursor-pointer ${mode === 'sent' ? 'bg-white/15 text-white' : 'text-white/40 hover:text-white/70'}`}
             >This image</button>
-          </div>
-        )}
+          )}
+          {onGenerateRaw && (
+            <button
+              onClick={() => setMode('raw')}
+              className={`px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider cursor-pointer ${mode === 'raw' ? 'bg-amber-500/30 text-amber-300' : 'text-white/40 hover:text-white/70'}`}
+              title="Paste a hand-written prompt and generate directly, bypassing the assembler. Character refs still attach."
+            >Raw</button>
+          )}
+        </div>
         <button onClick={copy} className="px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded border border-white/10 text-white/60 hover:text-white hover:bg-white/10 cursor-pointer font-mono">
           {copied ? 'Copied' : 'Copy'}
         </button>
@@ -139,11 +150,53 @@ export function WorkbenchPromptPanel({
       )}
  
       {/* the prompt */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-3 scrollbar-thin scrollbar-thumb-white/10">
-        <pre className="text-[11px] leading-[1.5] whitespace-pre-wrap break-words text-white/85" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', margin: 0 }}>
-          {shownPrompt || '(no prompt — select a page)'}
-        </pre>
-      </div>
+      {mode === 'raw' ? (
+        <div className="flex-1 min-h-0 flex flex-col p-3 gap-2">
+          <div className="text-[10px] text-amber-400/80 font-mono uppercase tracking-widest shrink-0">
+            Paste your prompt below. Character refs + style header still attach. Assembler is bypassed.
+          </div>
+          <textarea
+            className="flex-1 min-h-0 w-full bg-black/40 border border-amber-500/20 rounded p-2 text-[11px] leading-[1.5] text-white/85 resize-none font-mono focus:outline-none focus:border-amber-500/50 scrollbar-thin scrollbar-thumb-white/10"
+            placeholder="Paste your hand-written prompt here..."
+            value={rawPrompt}
+            onChange={e => setRawPrompt(e.target.value)}
+            spellCheck={false}
+          />
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[10px] text-white/30 font-mono flex-1">
+              {rawPrompt.length > 0 ? `${rawPrompt.length} chars` : ''}
+            </span>
+            <button
+              onClick={() => setRawPrompt(preview.fullPrompt)}
+              className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider rounded border border-white/10 text-white/50 hover:text-white hover:bg-white/10 cursor-pointer font-mono"
+              title="Load the assembled prompt into the textarea as a starting point"
+            >
+              Load assembled
+            </button>
+            <button
+              disabled={!rawPrompt.trim() || isGeneratingRaw}
+              onClick={async () => {
+                if (!rawPrompt.trim() || !onGenerateRaw) return;
+                setIsGeneratingRaw(true);
+                try {
+                  await onGenerateRaw(rawPrompt.trim());
+                } finally {
+                  setIsGeneratingRaw(false);
+                }
+              }}
+              className="px-3 py-1 text-[10px] font-black uppercase tracking-wider rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white cursor-pointer transition-colors"
+            >
+              {isGeneratingRaw ? 'Generating…' : 'Generate'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 scrollbar-thin scrollbar-thumb-white/10">
+          <pre className="text-[11px] leading-[1.5] whitespace-pre-wrap break-words text-white/85" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', margin: 0 }}>
+            {shownPrompt || '(no prompt — select a page)'}
+          </pre>
+        </div>
+      )}
  
       {/* reference manifest */}
       <div className="border-t border-white/10 shrink-0 max-h-[34%] overflow-y-auto p-3 scrollbar-thin scrollbar-thumb-white/10 font-mono">

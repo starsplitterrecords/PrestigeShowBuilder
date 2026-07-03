@@ -1,9 +1,36 @@
-// finalPagePromptPreview.ts — DA-082
+// finalPagePromptPreview.ts — DA-082, DA-114
 // Pure, model-free assembly of the EXACT composite prompt + reference manifest
 // for a page. Single source of truth: generateFinalComicPage calls
 // buildCompositePrompt() for the string it actually sends, and the Scene
 // Workbench prompt panel calls buildPagePromptPreview() to show that same
 // string live, before any generation. No drift between preview and dispatch.
+//
+// DA-114 changes (prompt structure recalibration for gemini-3-pro-image):
+// — Prompt order: who/what → composition → panels → lettering → style.
+//   This model reads a brief top-to-bottom; subject first, style last.
+// — ONE PASS process narration removed (tells the model nothing visual).
+// — Duplicate layout line removed (was stated twice: header + body sentence).
+// — Layout names expanded to literal geometry (DIALOGUE_ROW → "three equal
+//   horizontal panels in a single row"). Internal enum names are opaque to
+//   the model.
+// — FOCAL PANEL gated on layouts that actually support a dominant cell.
+//   Fixed-grid layouts (2×2, equal rows, equal columns) can't honor it.
+// — (declared position: ...) metadata stripped from balloon tail instructions.
+//   It's internal bookkeeping; the model read it as text to position.
+// — (responding to ...) annotation stripped from CHARACTER POSITIONS.
+//   inResponseTo informed the plan; the visible bodyLanguage and
+//   facialExpression fields already carry that forward. The annotation
+//   leaked authorial intent (not a visible behavior) into the prompt.
+// — CONSISTENCY RULES character-appearance clause removed — identical to
+//   the appearance contract already stated in the CHARACTERS block.
+//   Direct-address constraint kept as a single terse line.
+// — LETTERING consolidated: the style header no longer has a LETTERING block.
+//   One LETTERING SPEC appears at the bottom of this prompt, immediately
+//   before STYLE, adjacent to the text it governs.
+// — settingNote param added to buildCompositePrompt so the DIRECTOR'S NOTE
+//   (location info) appears inside the composite string, between CHARACTERS
+//   and the layout header, rather than being prepended externally.
+// — buildPagePromptPreview now puts styleHeader last in fullPrompt.
 
 import { Show } from '../../types/show';
 import {
@@ -13,11 +40,59 @@ import {
   buildFinalPageBeat,
   validateFinalPage,
 } from './finalPageContract';
-import { assembleComicStyleHeader } from './comicStyleHeader';
+import { assembleComicStyleHeader, DEFAULT_LETTERING_STYLE } from './comicStyleHeader';
 
-// renderTextItem — moved here from generateFinalComicPage so the preview and
-// the live call share it verbatim. (Delete the copy in generateFinalComicPage
-// and import this one — see DA-082 Edit 2.)
+// ── Layout name → human-readable geometry ────────────────────────────────────
+// Internal enum strings (DIALOGUE_ROW, TRIPTYCH_H, etc.) are opaque to the
+// model. This map expands them to literal layout descriptions the model can
+// actually follow.
+
+const LAYOUT_GEOMETRY: Record<string, string> = {
+  'SPLASH':                  'full-page splash — single panel fills the entire canvas',
+  'EQUAL_CONFRONTATION':     'two equal panels stacked vertically',
+  'DIALOGUE_ROW':            'three equal horizontal panels in a single row',
+  'THREE-PANEL SEQUENCE':    'three equal horizontal panels in a single row',
+  'THREE-PANEL FOCUS':       'three panels: large left panel, two smaller panels stacked on the right',
+  'THREE-PANEL ESCALATION':  'three panels increasing in height left to right',
+  'TRIPTYCH_H':              'three equal horizontal panels in a single row',
+  'TRIPTYCH_V':              'three equal vertical panels side by side',
+  'ACTION_SEQUENCE':         'three panels: large top panel spanning full width, two equal panels below',
+  'FEATURE_DETAIL':          'three panels: large left panel, two smaller panels stacked on the right',
+  'ESCALATION':              'three panels increasing in height left to right',
+  'WIDE_SPLIT':              'wide top panel spanning full width above two equal panels side by side',
+  'SPLIT_WIDE':              'two equal panels side by side above a wide bottom panel spanning full width',
+  'FOUR-PANEL 2x2 GRID':    'four equal panels in a 2×2 grid',
+  '4-panel grid':            'four equal panels in a 2×2 grid',
+  'FOUR_UP':                 'four equal panels in a 2×2 grid',
+  'ASYMMETRIC_LEFT_FEATURE': 'large left panel and two smaller panels stacked on the right',
+};
+
+// Layouts where a FOCAL PANEL instruction makes sense — those with
+// inherent size asymmetry. Fixed-grid layouts (all panels equal) cannot
+// honor it and should not emit it.
+const FOCAL_PANEL_ELIGIBLE = new Set([
+  'SPLASH',
+  'ACTION_SEQUENCE',
+  'FEATURE_DETAIL',
+  'THREE-PANEL FOCUS',
+  'THREE-PANEL ESCALATION',
+  'ESCALATION',
+  'WIDE_SPLIT',
+  'SPLIT_WIDE',
+  'ASYMMETRIC_LEFT_FEATURE',
+]);
+
+function expandLayoutName(raw: string, panelCount: number): string {
+  if (LAYOUT_GEOMETRY[raw]) return LAYOUT_GEOMETRY[raw];
+  if (/^\d+-panel grid$/i.test(raw)) return `${panelCount} equal panels in a grid`;
+  return raw;
+}
+
+// ── renderTextItem ────────────────────────────────────────────────────────────
+// DA-114: (declared position: ...) annotation removed from tail instructions.
+// It was internal bookkeeping from the panel plan; the model read it as a
+// literal positioning constraint, creating noise.
+
 export const renderTextItem = (t: TextRenderItem): string[] => {
   if (t.kind === 'caption') {
     const box =
@@ -39,12 +114,9 @@ export const renderTextItem = (t: TextRenderItem): string[] => {
   const lines = [head, `      Render verbatim: "${t.text}"`];
 
   if (!t.chained) {
-    const declared = t.speakerZone
-      ? ` (declared position: ${t.speakerZone} ${t.speakerDepth ?? ''})`.trimEnd() + ')'
-      : '';
     lines.push(
       `      Placement: ${t.position}; tail ${t.tailDirection ?? 'points toward the speaker'} — ` +
-      `terminate at ${t.speakerName}'s mouth${declared}.`
+      `terminate at ${t.speakerName}'s mouth.`
     );
     if (t.speakerAnchor) lines.push(`      Speaker visual: ${t.speakerAnchor}.`);
   }
@@ -52,15 +124,38 @@ export const renderTextItem = (t: TextRenderItem): string[] => {
   return lines;
 };
 
-// buildCompositePrompt — the EXACT string sent to the model. Extracted verbatim
-// from generateFinalComicPage (lines 108–221). Pure function of the contract.
-export function buildCompositePrompt(contract: FinalPageBeat): string {
+// ── buildCompositePrompt ──────────────────────────────────────────────────────
+// DA-114 prompt order (subject → composition → panels → lettering → style):
+//   1. CHARACTERS ON THIS PAGE
+//   2. DIRECTOR'S NOTE / location (settingNote param, optional)
+//   3. FINAL COMIC PAGE — N PANELS — [expanded geometry]
+//   4. PAGE REGISTER
+//   5. PANEL SEQUENCE
+//   6. PROP CONTINUITY
+//   7. LETTERING SPEC (single consolidated block — no duplicate in style header)
+//   8. [SILENT PAGE if applicable]
+// STYLE is appended outside this function (in fullPrompt, last).
+
+export function buildCompositePrompt(contract: FinalPageBeat, settingNote?: string, show?: Show): string {
   const c = contract;
 
-  const namedLine = c.characters
-    .map(ch => ch.name)
-    .join(', ');
+  const layoutGeometry = expandLayoutName(c.layoutName, c.panelCount);
+  const focalEligible = FOCAL_PANEL_ELIGIBLE.has(c.layoutName);
 
+  const namedLine = c.characters.map(ch => ch.name).join(', ');
+
+  // ── 1. CHARACTERS block ───────────────────────────────────────────────────
+  const charactersBlock = c.characters.length > 0
+    ? `CHARACTERS ON THIS PAGE — Whenever a named character appears, the attached reference image for that character is the single source of truth for their appearance. Match the attached portrait exactly wherever that character appears: same face, same hair, same build, same costume. Do not add characters to panels where they are not staged.\n${namedLine}`
+    : '';
+
+  // ── 3. Page header ────────────────────────────────────────────────────────
+  const pageHeader = [
+    `FINAL COMIC PAGE — ${c.panelCount} PANEL${c.panelCount > 1 ? 'S' : ''} — ${layoutGeometry}.`,
+    'Panels are separated by thin black gutters. The full 3:4 page is the canvas.',
+  ].join('\n');
+
+  // ── 4. PAGE REGISTER ──────────────────────────────────────────────────────
   const vd = c.visualDirection;
   const vdBlock = vd ? [
     'PAGE REGISTER (shared by all panels):',
@@ -70,8 +165,7 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
     vd.environmentalDetail ? `Environmental detail: ${vd.environmentalDetail}` : '',
   ].filter(Boolean).join('\n') : '';
 
-  const anyDirect = c.panels.some(p => p.directAddress);
-
+  // ── 5. PANEL SEQUENCE ─────────────────────────────────────────────────────
   const panelBlocks = c.panels.map(p => {
     const L: string[] = [];
     L.push(`PANEL ${p.index + 1} — ${p.shotType}`);
@@ -86,13 +180,12 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
         const anchorNote = cp.anchor ? ` [${cp.anchor}]` : '';
         const expr = [cp.bodyLanguage, cp.facialExpression].filter(Boolean).join('; ');
         const exprNote = expr ? ` — ${expr}` : '';
-        const respNote = cp.inResponseTo ? ` (responding to ${cp.inResponseTo})` : '';
-        return `    - ${cp.name}${anchorNote}: ${cp.zone} ${cp.depth}${facing}${exprNote}${respNote}`;
+        return `    - ${cp.name}${anchorNote}: ${cp.zone} ${cp.depth}${facing}${exprNote}`;
       }).join('\n');
       L.push(`  CHARACTER POSITIONS:\n${pos}`);
     }
-    if (c.focalPanelIndex === p.index) {
-      L.push('  FOCAL PANEL: this panel dominates the page — give it the most space and visual weight.');
+    if (focalEligible && c.focalPanelIndex === p.index) {
+      L.push('  FOCAL PANEL: this panel carries the most visual weight — give it the largest area.');
     }
     if (p.directAddress) {
       L.push('  DIRECT ADDRESS: a character looks at the reader here — intentional, high-impact.');
@@ -106,6 +199,7 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
     return L.join('\n');
   }).join('\n\n');
 
+  // ── 6. PROP CONTINUITY ────────────────────────────────────────────────────
   const propsBlock = (c.panelProps?.length ?? 0) > 0
     ? [
         'PROP CONTINUITY — draw these objects identically in every panel they appear. Description is the spec:',
@@ -114,59 +208,53 @@ export function buildCompositePrompt(contract: FinalPageBeat): string {
       ].join('\n')
     : '';
 
+  // ── 7. LETTERING SPEC (single consolidated block) ────────────────────────
+  const letteringStyle = (show?.comicStyle as any)?.letteringStyle || DEFAULT_LETTERING_STYLE;
   const letteringSpec = c.silentPage ? '' : [
-    'LETTERING SPEC (applies to every TEXT TO RENDER item above):',
-    '— Render ONLY the text listed above, character-for-character. If a balloon, caption, label, sign, or sound effect is not listed, it does not exist on this page. Never invent text.',
-    '— Follow the book-wide LETTERING style from the header.',
-    '— Tails must terminate at the speaker’s mouth unless the item is marked as a joined continuation.',
-    '— Captions: rectangular boxes at the panel’s top edge, styles as specified per item.',
-    '— FACE PROTECTION: no balloon, caption, or tail may cover any character’s face. If text would cover a face, move it to negative space.',
+    `LETTERING: ${letteringStyle}`,
+    '— Render ONLY the text listed above, character-for-character. Never invent balloon, caption, label, sign, or sound effect text.',
+    '— Tails must terminate at the speaker\'s mouth unless the item is marked as a joined continuation.',
+    '— Captions: rectangular boxes at the panel\'s top edge, styled as specified.',
+    '— FACE PROTECTION: no balloon, caption, or tail may cover any character\'s face. Move to negative space if needed.',
     '— Balloons must be large enough that all text is fully legible.',
     '',
   ].join('\n');
 
   const silentBlock = c.silentPage ? [
     'SILENT PAGE.',
-    'This page contains no dialogue, no captions, no signage, no sound effects, and no readable text of any kind.',
+    'No dialogue, no captions, no signage, no sound effects, no readable text of any kind.',
     'Pure visual storytelling. Any text in the output is a failure.',
     '',
   ].join('\n') : '';
 
+  const anyDirect = c.panels.some(p => p.directAddress);
+  const stagingConstraint = anyDirect
+    ? '— Direct address only in panels marked above; all other panels keep characters engaged with the scene.'
+    : '— Characters face and engage each other and the scene, not the reader.';
+
   return [
-    `FINAL COMIC PAGE — ${c.panelCount} PANEL${c.panelCount > 1 ? 'S' : ''} — LAYOUT: ${c.layoutName}`,
-    'ONE PASS: artwork and lettering are produced together. The output is the finished, lettered comic page.',
+    charactersBlock,
+    charactersBlock ? '' : null,
+    settingNote || null,
+    settingNote ? '' : null,
+    pageHeader,
     '',
-    'Generate a single image that is a complete comic book page.',
-    `The page contains exactly ${c.panelCount} panel${c.panelCount > 1 ? 's' : ''} arranged in the ${c.layoutName} layout.`,
-    'Panels are separated by thin black gutters. The full 3:4 page is the canvas.',
-    '',
-    c.characters.length > 0
-      ? `CHARACTERS ON THIS PAGE — Whenever a named character appears, the attached reference image for that character is the single source of truth for their appearance. Match the attached portrait exactly wherever that character appears: same face, same hair, same build, same costume. Do not add characters to panels where they are not staged.\n${c.characters.map(ch => ch.name).join(', ')}`
-      : '',
-    '',
-    vdBlock,
+    vdBlock || null,
     vdBlock ? '' : null,
     'PANEL SEQUENCE — render in reading order (left to right, top to bottom):',
     '',
     panelBlocks,
     '',
-    propsBlock,
-    'CONSISTENCY RULES:',
-    anyDirect
-      ? '— Direct address is used only in the panel(s) marked above; all other panels keep characters engaged with the scene, not the reader.'
-      : '— Characters face and engage each other and the scene, not the reader. No forward-facing direct-to-camera poses; direct address is not used on this page.',
-    namedLine
-      ? `— ${namedLine}: identical appearance in every panel where they appear — same face, same costume, same build.`
-      : '— Characters: identical appearance in every panel where they appear. Same face, same costume, same build.',
-    '— Lighting direction, color palette, and art style must be consistent across all panels.',
-    '— Panels flow in reading order: left to right, top to bottom.',
+    propsBlock || null,
+    propsBlock ? '' : null,
+    stagingConstraint,
     '',
     letteringSpec,
     silentBlock,
   ].filter(s => s !== null && s !== undefined).join('\n');
 }
 
-// ── Live preview (no model call) ──────────────────────────────────────────
+// ── Live preview (no model call) ──────────────────────────────────────────────
 
 export interface PromptManifestItem {
   kind: 'style' | 'character' | 'setting' | 'prior';
@@ -176,10 +264,10 @@ export interface PromptManifestItem {
 
 export interface PagePromptPreview {
   ok: boolean;
-  blocked: boolean;            // hard preflight failure (duplicate / zero-ref / unresolved)
+  blocked: boolean;
   styleHeader: string;
-  compositePrompt: string;     // identical to what generateFinalComicPage will send
-  fullPrompt: string;          // styleHeader + composite, as the model receives text parts
+  compositePrompt: string;
+  fullPrompt: string;
   manifest: PromptManifestItem[];
   errors: string[];
   warnings: string[];
@@ -205,9 +293,8 @@ export function buildPagePromptPreview(
   const preflight = validateFinalPage(contract, problems, refCounts);
 
   const styleHeader = assembleComicStyleHeader(show, contract.silentPage);
-  const compositePrompt = buildCompositePrompt(contract);
 
-  let settingPrefix = '';
+  let settingNote: string | undefined;
   if (settingAnchorId) {
     const anchor = (show.settingAnchors ?? []).find(a => a.id === settingAnchorId);
     if (anchor) {
@@ -216,15 +303,17 @@ export function buildPagePromptPreview(
       if (anchor.visualDescription) descParts.push(anchor.visualDescription);
       if (anchor.mood) descParts.push(`Mood: ${anchor.mood}.`);
       if (descParts.length > 0) {
-        settingPrefix = `DIRECTOR'S NOTE (PRIORITY): LOCATION — ${anchor.name}: ${descParts.join(' ')}`;
+        settingNote = `DIRECTOR'S NOTE (PRIORITY): LOCATION — ${anchor.name}: ${descParts.join(' ')}`;
       }
     }
   }
 
+  const compositePrompt = buildCompositePrompt(contract, settingNote, show);
+
+  // DA-114: styleHeader last — subject/action/lettering first, aesthetics last.
   const fullPrompt = [
-    styleHeader,
-    settingPrefix,
     compositePrompt,
+    styleHeader,
   ].filter(Boolean).join('\n\n');
 
   const manifest: PromptManifestItem[] = [];

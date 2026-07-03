@@ -269,7 +269,7 @@ export function useProductionPageActions(
 
   // Generate Image — always appends a new draft ImageVersion.
   // Never replaces approved versions.
-  const generateImage = async () => {
+  const generateImage = async (rawPromptOverride?: string) => {
     if (isPendingUpdate) {
       dispatch({ type: 'ADD_TOAST', toast: {
         id: Date.now().toString(), type: 'error',
@@ -418,6 +418,7 @@ export function useProductionPageActions(
           mode: 'paid',
           directorNote: settingPrefix || undefined,
           requiredCharacterAssetIds: refResolution.loadedRefs.map(r => r.assetId),
+          rawPromptOverride,
         });
       if (!result?.assetId) {
         dispatch({ type: 'ADD_TOAST', toast: {

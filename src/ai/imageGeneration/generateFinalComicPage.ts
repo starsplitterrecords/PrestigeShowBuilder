@@ -32,6 +32,9 @@ export const generateFinalComicPage = async (
     revisionImage?: string;
     directorNote?: string;
     requiredCharacterAssetIds?: string[];
+    // DA-115: bypass the assembler entirely. When set, this string replaces
+    // buildCompositePrompt(). Character refs and style header still attach.
+    rawPromptOverride?: string;
   } = {}
 ): Promise<GeneratedImageResult | null> => {
   const generationStartedAt = new Date().toISOString();
@@ -45,9 +48,11 @@ export const generateFinalComicPage = async (
     const imageSize = resolveImageSize(mode, 'production');
     const styleHeader = assembleComicStyleHeader(show, contract.silentPage);
 
-    // ── Parts: style → character refs → setting/locked refs → priors → prompt
+    // ── Parts: refs → composite prompt → style (DA-114: subject first, style last)
+    // Image parts go first so character references are loaded before staging is read.
+    // Composite prompt follows (characters → location → panels → lettering).
+    // Style header is last — aesthetics after subject and action.
     const parts: any[] = [];
-    parts.push({ text: styleHeader });
 
     const charOnly = characterRefs.filter(r => r.isCharacter === true);
     const otherRefs = characterRefs.filter(r => r.isCharacter !== true);
@@ -69,15 +74,18 @@ export const generateFinalComicPage = async (
       });
     }
 
-    if (options.directorNote) {
-      parts.push({ text: `DIRECTOR'S NOTE (PRIORITY): ${options.directorNote}` });
-    }
-
-    // ── Composite prompt — single pass, contract only
+    // DA-114: directorNote (location/setting) is passed into buildCompositePrompt
+    // as settingNote so it appears between CHARACTERS and the panel header —
+    // the model reads location context after knowing who's in the scene.
+    // DA-115: rawPromptOverride bypasses the assembler entirely. Character refs
+    // and style header are still attached; only the composite text is replaced.
     const c = contract;
-    const compositePrompt = buildCompositePrompt(contract);
+    const compositePrompt = options.rawPromptOverride ?? buildCompositePrompt(contract, options.directorNote, show);
 
     parts.push({ text: compositePrompt });
+
+    // DA-114: style last.
+    parts.push({ text: styleHeader });
 
     const requiredAssetIds = options.requiredCharacterAssetIds
       ?? charOnly.map(r => r.assetId);

@@ -1565,6 +1565,7 @@ export const SceneWorkbench: React.FC = () => {
                       continuity={continuity}
                       onToggleContinuity={setContinuity}
                       settingAnchorId={focusedPage.settingAnchorId}
+                      onGenerateRaw={(rawPrompt) => actions.generateImage(rawPrompt)}
                     />
                   </div>
                   {/* Right Canvas */}
