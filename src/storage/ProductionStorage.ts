@@ -1,55 +1,9 @@
 import { ShowStorage } from './ShowStorage';
-import { openDB, isStorageLocal } from './db';
+import { openDB } from './db';
 import {
   Issue, ProductionPage, IssueManifest,
   ImageVersion, PromotionRecord
 } from '../types/production';
-
-import { db } from '../firebase';
-import { doc, setDoc, collection, getDocs } from 'firebase/firestore';
-import { handleFirestoreError, OperationType } from '../lib/firestoreUtils';
-import { stripUndefined as firestoreSanitize } from './firestoreSanitize';
-
-// Fire-and-forget sync to Firestore.
-// Path: productions/{showId}/imageVersions/{uid}
-async function syncImageVersionToCloud(
-  showId: string,
-  version: ImageVersion
-): Promise<void> {
-  const ref = doc(
-    db, 'productions', showId, 'imageVersions', version.uid
-  );
-  await setDoc(ref, firestoreSanitize(version), { merge: true });
-}
-
-// Called on show load when local IDB store is empty.
-// Pulls image versions from Firestore for this show.
-export async function restoreImageVersionsFromCloud(
-  showId: string
-): Promise<void> {
-  try {
-    const snap = await getDocs(
-      collection(db, 'productions', showId, 'imageVersions')
-    );
-    const db2 = await openDB();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db2.transaction(
-        'production_image_versions', 'readwrite'
-      );
-      for (const d of snap.docs) {
-        tx.objectStore('production_image_versions')
-          .put(d.data() as ImageVersion);
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (err) {
-    handleFirestoreError(
-      err, OperationType.GET,
-      `productions/${showId}/imageVersions`
-    );
-  }
-}
 
 // Write a promoted Issue and all its associated objects to the show.
 // Called exclusively by the GNDS promotion bridge (DA-003).
@@ -97,13 +51,13 @@ export async function writePromotion(
     ],
   };
 
-  await ShowStorage.saveOne(updated, true); // local + cloud
+  await ShowStorage.saveOne(updated, false);
 }
 
 // Write a new ImageVersion (from workbench upload or generation).
 // DA-013: Writes to production_image_versions store, not to show.imageVersions
 export async function writeImageVersion(
-  showId: string,
+  _showId: string,
   version: ImageVersion
 ): Promise<void> {
   const idb = await openDB();
@@ -113,16 +67,6 @@ export async function writeImageVersion(
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
-
-  // Sync to Firestore fire-and-forget.
-  if (!isStorageLocal()) {
-    syncImageVersionToCloud(showId, version).catch(err =>
-      handleFirestoreError(
-        err, OperationType.WRITE,
-        `productions/${showId}/imageVersions/${version.uid}`
-      )
-    );
-  }
 }
 
 export async function getImageVersionsForPage(
@@ -188,7 +132,7 @@ export async function getImageVersionsForShow(
 }
 
 export async function updateImageVersionStatus(
-  showId: string,
+  _showId: string,
   uid: string,
   status: ImageVersion['status']
 ): Promise<void> {
@@ -202,14 +146,6 @@ export async function updateImageVersionStatus(
       const updated = { ...getReq.result, status };
       store.put(updated);
       
-      // Sync updated status to Firestore.
-      syncImageVersionToCloud(showId, updated).catch(err =>
-        handleFirestoreError(
-          err, OperationType.WRITE,
-          `productions/${showId}/imageVersions/${updated.uid}`
-        )
-      );
-
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     };

@@ -4,9 +4,7 @@ import { VaultStorage, migrateToAssetStorage } from './storage';
 import { backfillSceneTitles } from './utils/assembleTeleplay';
 import { migrateShow } from './utils/migration';
 import { syncShowAssignmentsAndGallery } from './utils/issueAssignment';
-import { auth, onAuthStateChanged, signInWithGoogle, signOut } from './firebase';
 import { ShowStorage } from './storage/ShowStorage';
-import { useAuthListener } from './hooks/useAuthListener';
 import { useStorageInit } from './hooks/useStorageInit';
 
 export type { User };
@@ -126,7 +124,7 @@ const initialState: State = {
   autoIgnite: false,
   generationMode: (getSafeLocalStorage('GENERATION_MODE', 'paid') as 'free' | 'paid'),
   user: null,
-  isAuthReady: false,
+  isAuthReady: true,
   viewport: 'desktop',
   reloadTrigger: 0,
 };
@@ -398,14 +396,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     stateRef.current = state;
   }, [state]);
 
-  useAuthListener((user) => {
-    dispatch({ type: 'SET_USER', user });
-    dispatch({ type: 'AUTH_READY' });
-  });
-
   useStorageInit(
-    state.isAuthReady,
-    state.user?.uid,
     (summaries) => dispatch({
       type: 'HYDRATE_LIST', summaries
     })

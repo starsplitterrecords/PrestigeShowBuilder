@@ -4,12 +4,9 @@ import { VaultStorage } from '../storage/VaultStorage';
 import type { ShowSummary } from '../types/models';
 
 export function useStorageInit(
-  isReady: boolean,
-  userId: string | undefined,
   onLoaded: (summaries: ShowSummary[]) => void
 ) {
   useEffect(() => {
-    if (!isReady) return;
     let cancelled = false;
     const timeout = setTimeout(() => {
       if (!cancelled) onLoaded([]);
@@ -27,5 +24,5 @@ export function useStorageInit(
       }
     })();
     return () => { cancelled = true; clearTimeout(timeout); };
-  }, [isReady, userId]);
+  }, [onLoaded]);
 }

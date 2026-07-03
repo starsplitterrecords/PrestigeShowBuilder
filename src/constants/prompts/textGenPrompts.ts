@@ -218,9 +218,25 @@ REQUIREMENTS:
    - ACTION: visual description of what is happening
    - SUBTEXT: emotional subtext or internal state
    - DIRECTION: specific camera or lighting direction
+   - FOREGROUND / MIDGROUND / BACKGROUND: what occupies each plane
+     of depth in this panel. A flat single plane is the failure —
+     stage across depth (a hand or object near, the subject in the
+     middle, context behind).
+   - RELATIONAL STAGING: when two or more characters share a
+     panel, how they occupy the frame together — the distance
+     between them, who faces whom, who is responding and who is
+     not. Never describe characters as independent figures who
+     merely share a background. Leave empty for solo panels.
    - DIALOGUE INDICES: indices from script entries to appear
    - CAPTION INDICES: indices of captions to appear
-   - CHARACTER POSITIONS: placement of each character in frame
+   - CHARACTER POSITIONS: placement of each character in frame —
+     for each character also give bodyLanguage, facialExpression,
+     and inResponseTo (what they are reacting to in this panel; for
+     a solo character, their relationship to the moment itself)
+   - DIRECT ADDRESS: a character looking at the reader is rare and
+     high-impact. Default false. Set true only for a genuine beat
+     of audience implication or emotional breakthrough — never as
+     the default for a character who happens to face the camera.
 3. Rules for CHARACTER POSITIONS placement:
    — A character who speaks should be visible
    — In OVER-THE-SHOULDER, listening char foreground, speaking

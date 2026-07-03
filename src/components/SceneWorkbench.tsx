@@ -6,6 +6,7 @@ import { runIssueGeneration, IssueGenProgress } from '../hooks/production/runIss
 import { estimateIssueImages, estimateShow } from '../vps/estimateRun';
 import { ImageVersion, PreflightWarning, PageBeat } from '../types/production';
 import { resolveCanonicalCharacters, getSpeakerDisplayLabel, getSpeakerClassification } from '../domainUtils';
+import { resolveCharacter } from '../utils/characterUtils';
 import { WorkbenchFilmstrip } from './workbench/WorkbenchFilmstrip';
 import { WorkbenchPageImage } from './workbench/WorkbenchPageImage';
 import { AlertTriangle, Layers, Film, FileText, CheckCircle2, ChevronDown, ChevronRight, X } from 'lucide-react';
@@ -20,6 +21,7 @@ import { WorkbenchPromptPanel } from './workbench/WorkbenchPromptPanel';
 import { getProductionPageStatus } from '../utils/productionStatus';
 import { pageBeatToComicBeat, findPageBeatByUid } from '../hooks/production/useProductionPageActions';
 import { planBeatVisuals } from '../ai/textGeneration/planBeatVisuals';
+import { fillBeatStaging } from '../ai/textGeneration/fillStaging';
 import { DialogueRecoveryModal } from './DialogueRecoveryModal';
 
 export const SceneWorkbench: React.FC = () => {
@@ -47,6 +49,12 @@ export const SceneWorkbench: React.FC = () => {
   const [isPlanFillRunning, setIsPlanFillRunning] = useState(false);
   const [planFillProgress, setPlanFillProgress] = useState<{ done: number; total: number; address: string } | null>(null);
   const planFillAbortRef = useRef(false);
+
+  // DA-110: bulk staging fill — generates missing/blank staging depth fields for all
+  // pages in the current issue that already have panel plans (using Flash).
+  const [isStagingFillRunning, setIsStagingFillRunning] = useState(false);
+  const [stagingFillProgress, setStagingFillProgress] = useState<{ done: number; total: number; address: string } | null>(null);
+  const stagingFillAbortRef = useRef(false);
 
   const handleFillPanelPlans = async () => {
     if (!currentShow || !selectedIssueUid) return;
@@ -129,6 +137,85 @@ export const SceneWorkbench: React.FC = () => {
     }
   };
 
+  const handleFillStaging = async () => {
+    if (!currentShow || !selectedIssueUid) return;
+
+    // Collect all pageBeats in the current issue that have existing panel plans,
+    // but have blank/unpopulated staging/depth fields.
+    const targets: { pageBeat: PageBeat; sceneShim: any }[] = [];
+    for (const iss of currentShow.issues ?? []) {
+      if (iss.uid !== selectedIssueUid) continue;
+      for (const act of iss.acts) {
+        for (const sc of act.scenes) {
+          for (const pb of sc.pageBeats) {
+            if (pb.panelPlans && pb.panelPlans.length > 0) {
+              const isMissingStaging = pb.panelPlans.some(p => !p.foreground || !p.midground || !p.background);
+              if (isMissingStaging) {
+                targets.push({
+                  pageBeat: pb,
+                  sceneShim: { id: sc.uid, fid: sc.uid, title: sc.title, setting: sc.setting, settingAnchorId: (sc as any).settingAnchorId },
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (targets.length === 0) {
+      dispatch({ type: 'ADD_TOAST', toast: { id: Date.now().toString(), type: 'success', message: 'All pages with panel plans in this issue already have staging filled.' } });
+      return;
+    }
+
+    setIsStagingFillRunning(true);
+    stagingFillAbortRef.current = false;
+
+    for (let i = 0; i < targets.length; i++) {
+      if (stagingFillAbortRef.current) break;
+      const { pageBeat: pb, sceneShim } = targets[i];
+      setStagingFillProgress({ done: i, total: targets.length, address: pb.address ?? pb.uid });
+      try {
+        const liveShow = liveShowRef.current;
+        if (!liveShow) break;
+        const livePb = findPageBeatByUid(liveShow, pb.uid) ?? pb;
+        const shimBeat = pageBeatToComicBeat(livePb);
+
+        // Fill staging details!
+        const { panels } = await fillBeatStaging(liveShow, shimBeat, sceneShim, livePb.panelPlans || [], 'free', undefined, dispatch);
+        if (panels && panels.length > 0) {
+          const baseShow = liveShowRef.current ?? liveShow;
+          const updatedIssues = (baseShow.issues ?? []).map(iss => ({
+            ...iss,
+            acts: iss.acts.map(act => ({
+              ...act,
+              scenes: act.scenes.map(sc => ({
+                ...sc,
+                pageBeats: sc.pageBeats.map(existing =>
+                  existing.uid === pb.uid
+                    ? { ...existing, panelPlans: panels }
+                    : existing
+                ),
+              })),
+            })),
+          }));
+          dispatch({ type: 'UPDATE_SHOW', updates: { issues: updatedIssues } });
+        }
+      } catch (e: any) {
+        dispatch({ type: 'ADD_TOAST', toast: { id: Date.now().toString(), type: 'error', message: `Staging fill failed for ${pb.address ?? pb.uid}: ${e.message}` } });
+      }
+      // 1.5s cooldown between calls — Flash is fast but don't hammer the API.
+      if (i < targets.length - 1 && !stagingFillAbortRef.current) {
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    setIsStagingFillRunning(false);
+    setStagingFillProgress(null);
+    if (!stagingFillAbortRef.current) {
+      dispatch({ type: 'ADD_TOAST', toast: { id: Date.now().toString(), type: 'success', message: `Staging filled for ${targets.length} page${targets.length !== 1 ? 's' : ''}.` } });
+    }
+  };
+
   // DA-105: bulk character resolution — walks every pageBeat in the current
   // issue, derives characterIds from script line handles and panel plan
   // characterPositions, resolves them against the show roster, and writes
@@ -136,6 +223,29 @@ export const SceneWorkbench: React.FC = () => {
   const handleResolveCharacters = () => {
     if (!currentShow || !selectedIssueUid) return;
     let updated = 0;
+ 
+    // DA-112: helper — resolves a raw handle string to the character's
+    // canonical handle (e.g. "@hv9jfbgm9" → "@brk.Arvin"). Returns the
+    // original value unchanged if resolution fails so nothing is silently
+    // blanked out.
+    const canonicalHandle = (raw: string | undefined): string | undefined => {
+      if (!raw) return raw;
+      const char = resolveCharacter(currentShow, raw);
+      return char?.handle ?? raw;
+    };
+ 
+    // DA-112: helper — replaces any "@token" substrings inside a free-text
+    // field with the character's canonical handle. Used for prose fields
+    // (foreground/midground/background/relationalStaging/inResponseTo) that
+    // may carry raw handles from the panel-plan generation pass.
+    const sweepHandles = (text: string | undefined): string | undefined => {
+      if (!text || !/@[\w.]/.test(text)) return text;
+      return text.replace(/@[\w.]+/g, token => {
+        const char = resolveCharacter(currentShow, token);
+        return char?.handle ?? token;
+      });
+    };
+ 
     const updatedIssues = (currentShow.issues ?? []).map(iss => {
       if (iss.uid !== selectedIssueUid) return iss;
       return {
@@ -146,27 +256,59 @@ export const SceneWorkbench: React.FC = () => {
             ...sc,
             pageBeats: sc.pageBeats.map(pb => {
               const handles = new Set<string>();
-              // From script lines
+ 
+              // ── 1. Collect handles from script lines ──────────────────
               const lines = pb.script?.lines ?? pb.script?.entries ?? [];
               for (const line of lines) {
                 if (line.characterHandle) handles.add(line.characterHandle);
               }
-              // From panel plan characterPositions
-              for (const panel of pb.panelPlans ?? []) {
-                for (const cp of panel.characterPositions ?? []) {
+ 
+              // ── 2. Collect + normalize panelPlan staging data ─────────
+              // (DA-112: extends DA-105 which only collected for characterIds)
+              const normalizedPlans = (pb.panelPlans ?? []).map(plan => {
+                const normalizedPositions = (plan.characterPositions ?? []).map(cp => ({
+                  ...cp,
+                  characterHandle: canonicalHandle(cp.characterHandle) ?? cp.characterHandle,
+                  bodyLanguage: sweepHandles(cp.bodyLanguage),
+                  facialExpression: sweepHandles(cp.facialExpression),
+                  inResponseTo: sweepHandles(cp.inResponseTo),
+                }));
+                // Collect handles for characterIds derivation
+                for (const cp of normalizedPositions) {
                   if (cp.characterHandle) handles.add(cp.characterHandle);
                 }
-              }
-              if (handles.size === 0) return pb;
+                return {
+                  ...plan,
+                  characterPositions: normalizedPositions,
+                  foreground: sweepHandles(plan.foreground),
+                  midground: sweepHandles(plan.midground),
+                  background: sweepHandles(plan.background),
+                  relationalStaging: sweepHandles(plan.relationalStaging),
+                };
+              });
+ 
+              // ── 3. Derive characterIds from all collected handles ──────
+              const hasStagingChanges = JSON.stringify(normalizedPlans) !== JSON.stringify(pb.panelPlans ?? []);
+ 
+              if (handles.size === 0 && !hasStagingChanges) return pb;
+ 
               const res = resolveCanonicalCharacters(currentShow, Array.from(handles));
               const ids = res.resolvedCharacters.map(c => c.id);
-              if (ids.length === 0) return pb;
+ 
               // Merge with existing — don't clobber manually assigned ids
               const merged = Array.from(new Set([...(pb.characterIds ?? []), ...ids]));
-              if (merged.length === (pb.characterIds ?? []).length &&
-                  merged.every(id => (pb.characterIds ?? []).includes(id))) return pb;
+              const idsChanged = !(
+                merged.length === (pb.characterIds ?? []).length &&
+                merged.every(id => (pb.characterIds ?? []).includes(id))
+              );
+ 
+              if (!hasStagingChanges && !idsChanged) return pb;
               updated++;
-              return { ...pb, characterIds: merged };
+              return {
+                ...pb,
+                ...(idsChanged ? { characterIds: merged } : {}),
+                ...(hasStagingChanges ? { panelPlans: normalizedPlans } : {}),
+              };
             }),
           })),
         })),
@@ -176,8 +318,8 @@ export const SceneWorkbench: React.FC = () => {
     dispatch({ type: 'ADD_TOAST', toast: {
       id: Date.now().toString(), type: 'success',
       message: updated > 0
-        ? `Character IDs resolved on ${updated} page${updated !== 1 ? 's' : ''}.`
-        : 'All pages already have character IDs \u2014 nothing to update.',
+        ? `Character IDs and staging data resolved on ${updated} page${updated !== 1 ? 's' : ''}.`
+        : 'All pages already resolved — nothing to update.',
     }});
   };
 
@@ -1027,7 +1169,7 @@ export const SceneWorkbench: React.FC = () => {
               {!isPlanFillRunning ? (
                 <button
                   onClick={handleFillPanelPlans}
-                  disabled={!selectedIssueUid}
+                  disabled={!selectedIssueUid || isStagingFillRunning}
                   className="px-3 py-1.5 text-[11px] font-bold rounded bg-amber-600/15 border border-amber-500/25 text-amber-300 hover:bg-amber-600/25 disabled:opacity-40 transition-colors cursor-pointer ml-1"
                   title="Generate panel plans for all pages in this issue that are missing one (Flash model, ~1.5s between pages)"
                 >
@@ -1042,6 +1184,31 @@ export const SceneWorkbench: React.FC = () => {
                   </span>
                   <button
                     onClick={() => { planFillAbortRef.current = true; setIsPlanFillRunning(false); setPlanFillProgress(null); }}
+                    className="px-2 py-1 text-[10px] rounded bg-red-600/20 border border-red-500/30 text-red-300 hover:bg-red-600/30 transition-colors cursor-pointer"
+                  >
+                    Stop
+                  </button>
+                </div>
+              )}
+              {/* DA-110: fill missing/blank staging depth fields for all pages in this issue */}
+              {!isStagingFillRunning ? (
+                <button
+                  onClick={handleFillStaging}
+                  disabled={!selectedIssueUid || isPlanFillRunning}
+                  className="px-3 py-1.5 text-[11px] font-bold rounded bg-amber-600/15 border border-amber-500/25 text-amber-300 hover:bg-amber-600/25 disabled:opacity-40 transition-colors cursor-pointer ml-1"
+                  title="Enrich panel plans with detailed foreground/midground/background/relational staging for all pages in this issue where staging is unpopulated (Flash model, ~1.5s between pages)"
+                >
+                  Fill Staging
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 ml-1">
+                  <span className="text-[10px] text-white/60 font-mono">
+                    {stagingFillProgress
+                      ? `Staging ${stagingFillProgress.done + 1}/${stagingFillProgress.total} \u2014 ${stagingFillProgress.address}`
+                      : 'Starting\u2026'}
+                  </span>
+                  <button
+                    onClick={() => { stagingFillAbortRef.current = true; setIsStagingFillRunning(false); setStagingFillProgress(null); }}
                     className="px-2 py-1 text-[10px] rounded bg-red-600/20 border border-red-500/30 text-red-300 hover:bg-red-600/30 transition-colors cursor-pointer"
                   >
                     Stop

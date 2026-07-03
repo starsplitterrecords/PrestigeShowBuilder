@@ -6,7 +6,6 @@ import {
 import { AssetStorage } from "./AssetStorage";
 import { SummaryStorage } from "./SummaryStorage";
 import { ShowStorage } from "./ShowStorage";
-import { auth } from "../firebase";
 import { migrateShow } from "./migrations";
 
 /**
@@ -144,10 +143,6 @@ export const VaultIO = {
 
     for (const rawShow of shows) {
       const show = migrateShow(rawShow);
-      const user = auth.currentUser;
-      if (user) {
-        show.ownerId = user.uid;
-      }
       
       // D214: Restore as New if ID exists locally list (direct local query to avoid auto-triggering cloud download)
       const existing = await this._getLocalShow(show.id);

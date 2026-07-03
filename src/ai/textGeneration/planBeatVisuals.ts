@@ -83,6 +83,13 @@ ${resolved.authorityBlock}
         dialogueIndices: p.dialogueIndices || [],
         captionIndices: p.captionIndices || [],
         characterPositions: p.characterPositions || [],
+        // DA-110: previously VPS-only — now this generator owns them too,
+        // so there is one source for a panel plan instead of two.
+        foreground: p.foreground || undefined,
+        midground: p.midground || undefined,
+        background: p.background || undefined,
+        relationalStaging: p.relationalStaging || undefined,
+        directAddress: p.directAddress === true,
       })
     );
 

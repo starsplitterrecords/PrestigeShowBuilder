@@ -162,10 +162,3 @@ export const buildSummary = (show: Show): ShowSummary => {
   };
 };
 
-export const isStorageLocal = (): boolean => {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('psb4_storage_mode') === 'local';
-  }
-  return false;
-};
-

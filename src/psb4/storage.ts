@@ -14,10 +14,16 @@ import {
 } from './types';
 import { Psb4InvariantError } from './errors';
 import { migrateIfNeeded } from './migrations';
-import { handleFirestoreError, OperationType } from '../lib/firestoreUtils';
-import { db } from '../firebase';
-import { doc, setDoc, collection, getDocs, deleteDoc } from 'firebase/firestore';
-import { stripUndefined as firestoreSanitize } from '../storage/firestoreSanitize';
+
+export enum OperationType {
+  GET = 'get',
+  WRITE = 'write',
+  DELETE = 'delete'
+}
+
+export function handleFirestoreError(err: any, type: OperationType, path: string) {
+  console.warn(`Local DB warning on ${type} of ${path}:`, err);
+}
 
 type Psb4Source = NormalizedSource;
 
@@ -127,126 +133,28 @@ const prevSyncSources = new Map<string, string>();
 const lastSyncTimes = new Map<string, number>();
 const lastSyncStatus = new Map<string, string>();
 
-// Flame-and-forget dummy Firebase sync stubs (implementations added in later directives)
+// Flame-and-forget sync dummy methods (disabled, all storage in IndexedDB)
 async function syncRunToCloud(
-  run: Psb4Run
-): Promise<void> {
-  if (getStorageMode() === 'local') return;
-  if (isFirestoreQuotaExhausted()) return;
-
-  const runKey = run.id;
-  const serialized = JSON.stringify(firestoreSanitize(run));
-  if (prevSyncRuns.get(runKey) === serialized) {
-    return;
-  }
-  prevSyncRuns.set(runKey, serialized);
-
-  // Throttling non-critical updates (heartbeat, updatedAt) to 10 seconds minimum
-  const now = Date.now();
-  const lastTime = lastSyncTimes.get(`run:${run.id}`) || 0;
-  const statusChanged = run.status !== lastSyncStatus.get(run.id);
-
-  if (statusChanged) {
-    lastSyncStatus.set(run.id, run.status);
-  } else {
-    if (now - lastTime < 10000) {
-      return;
-    }
-  }
-  lastSyncTimes.set(`run:${run.id}`, now);
-
-  const ref = doc(db, 'psb4', run.showId,
-    'runs', run.id);
-  await setDoc(ref, firestoreSanitize(run), { merge: true }).catch((err) => {
-    handleFirestoreError(err, OperationType.WRITE, `psb4/${run.showId}/runs/${run.id}`);
-  });
-}
+  _run: Psb4Run
+): Promise<void> {}
 
 async function syncArtifactToCloud(
-  artifact: Psb4Artifact
-): Promise<void> {
-  if (getStorageMode() === 'local') return;
-  if (isFirestoreQuotaExhausted()) return;
-
-  const artKey = artifact.id;
-  const serialized = JSON.stringify(firestoreSanitize(artifact));
-  if (prevSyncArtifacts.get(artKey) === serialized) {
-    return;
-  }
-  prevSyncArtifacts.set(artKey, serialized);
-
-  const ref = doc(db, 'psb4', artifact.showId,
-    'artifacts', artifact.id);
-  await setDoc(ref, firestoreSanitize(artifact), { merge: true }).catch((err) => {
-    handleFirestoreError(err, OperationType.WRITE, `psb4/${artifact.showId}/artifacts/${artifact.id}`);
-  });
-}
+  _artifact: Psb4Artifact
+): Promise<void> {}
 
 async function syncCorpusToCloud(
-  corpus: Psb4Corpus
-): Promise<void> {
-  if (getStorageMode() === 'local') return;
-  if (isFirestoreQuotaExhausted()) return;
-
-  const corpKey = corpus.id;
-  const serialized = JSON.stringify(firestoreSanitize(corpus));
-  if (prevSyncCorpus.get(corpKey) === serialized) {
-    return;
-  }
-  prevSyncCorpus.set(corpKey, serialized);
-
-  const ref = doc(db, 'psb4', corpus.showId,
-    'corpus', corpus.id);
-  await setDoc(ref, firestoreSanitize(corpus), { merge: true }).catch((err) => {
-    handleFirestoreError(err, OperationType.WRITE, `psb4/${corpus.showId}/corpus/${corpus.id}`);
-  });
-}
+  _corpus: Psb4Corpus
+): Promise<void> {}
 
 async function syncConsoleEntryToCloud(
-  entry: Psb4ConsoleEntry
-): Promise<void> {
-  // Disable Firestore-backed debug logging by default.
-  // Console/debug entries are saved locally via IDB.
-  if (getStorageMode() === 'local' || !localStorage.getItem('psb4_enable_cloud_console_logging')) {
-    return;
-  }
-  if (isFirestoreQuotaExhausted()) return;
-
-  const entryKey = entry.id;
-  const serialized = JSON.stringify(firestoreSanitize(entry));
-  if (prevSyncConsoleEntries.get(entryKey) === serialized) {
-    return;
-  }
-  prevSyncConsoleEntries.set(entryKey, serialized);
-
-  const ref = doc(db, 'psb4', entry.showId,
-    'console', entry.id);
-  await setDoc(ref, firestoreSanitize(entry), { merge: true }).catch((err) => {
-    handleFirestoreError(err, OperationType.WRITE, `psb4/${entry.showId}/console/${entry.id}`);
-  });
-}
+  _entry: Psb4ConsoleEntry
+): Promise<void> {}
 
 async function syncSourceToCloud(
-  source: Psb4Source
-): Promise<void> {
-  if (getStorageMode() === 'local') return;
-  if (isFirestoreQuotaExhausted()) return;
+  _source: Psb4Source
+): Promise<void> {}
 
-  const srcKey = source.id;
-  const serialized = JSON.stringify(firestoreSanitize(source));
-  if (prevSyncSources.get(srcKey) === serialized) {
-    return;
-  }
-  prevSyncSources.set(srcKey, serialized);
-
-  const ref = doc(db, 'psb4', source.showId,
-    'sources', source.id);
-  await setDoc(ref, firestoreSanitize(source), { merge: mergeChecked(source) }).catch((err) => {
-    handleFirestoreError(err, OperationType.WRITE, `psb4/${source.showId}/sources/${source.id}`);
-  });
-}
-
-function mergeChecked(source: Psb4Source): any {
+function mergeChecked(_source: Psb4Source): any {
   return true;
 }
 
@@ -273,33 +181,8 @@ async function writeArtifactToIDB(artifact: Psb4Artifact): Promise<void> {
 }
 
 export async function restorePsb4FromCloud(
-  showId: string
-): Promise<void> {
-  if (getStorageMode() === 'local') return;
-  const localRuns = await listRuns(showId);
-  if (localRuns.length > 0) return; // local data wins
-
-  try {
-    // Restore runs
-    const runsSnap = await getDocs(
-      collection(db, 'psb4', showId, 'runs')
-    );
-    for (const d of runsSnap.docs) {
-      const run = d.data() as Psb4Run;
-      await writeRunToIDB(run); // write directly, skip cloud sync
-    }
-    // Restore artifacts
-    const artSnap = await getDocs(
-      collection(db, 'psb4', showId, 'artifacts')
-    );
-    for (const d of artSnap.docs) {
-      await writeArtifactToIDB(d.data() as Psb4Artifact);
-    }
-  } catch (err) {
-    handleFirestoreError(err, OperationType.GET,
-      `psb4/${showId}`);
-  }
-}
+  _showId: string
+): Promise<void> {}
 
 // ----------------------------------------------------------------------------
 // RUNS ACCESSORS
@@ -2100,21 +1983,6 @@ export async function resetPass09W(runId: string): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
-
-  // 3. Reconcile with cloud Firestore
-  for (const art of artifactsToDelete) {
-    const ref = doc(db, 'psb4', art.showId, 'artifacts', art.id);
-    await deleteDoc(ref).catch((err) => {
-      handleFirestoreError(err, OperationType.DELETE, `psb4/${art.showId}/artifacts/${art.id}`);
-    });
-  }
-
-  for (const con of consoleEntriesToDelete) {
-    const ref = doc(db, 'psb4', con.showId, 'console', con.id);
-    await deleteDoc(ref).catch((err) => {
-      handleFirestoreError(err, OperationType.DELETE, `psb4/${con.showId}/console/${con.id}`);
-    });
-  }
 }
 
 export async function resetPass09G(runId: string): Promise<void> {
@@ -2189,21 +2057,6 @@ export async function resetPass09G(runId: string): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
-
-  // 3. Reconcile with cloud Firestore
-  for (const art of artifactsToDelete) {
-    const ref = doc(db, 'psb4', art.showId, 'artifacts', art.id);
-    await deleteDoc(ref).catch((err) => {
-      handleFirestoreError(err, OperationType.DELETE, `psb4/${art.showId}/artifacts/${art.id}`);
-    });
-  }
-
-  for (const con of consoleEntriesToDelete) {
-    const ref = doc(db, 'psb4', con.showId, 'console', con.id);
-    await deleteDoc(ref).catch((err) => {
-      handleFirestoreError(err, OperationType.DELETE, `psb4/${con.showId}/console/${con.id}`);
-    });
-  }
 }
 
 

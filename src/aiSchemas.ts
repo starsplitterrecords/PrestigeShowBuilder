@@ -635,6 +635,26 @@ export function buildSchemas(show?: Show) {
               action: { type: Type.STRING, description: "Visual description of the action in this panel." },
               subtext: { type: Type.STRING, description: "Emotional subtext or internal state for this panel" },
               direction: { type: Type.STRING, description: "Camera or lighting direction for this panel" },
+              foreground: {
+                type: Type.STRING,
+                description: "What occupies the near plane of this panel — an object, a hand, a partial figure. Stage depth; never leave this flat."
+              },
+              midground: {
+                type: Type.STRING,
+                description: "What occupies the middle plane — typically where the primary subject sits."
+              },
+              background: {
+                type: Type.STRING,
+                description: "What occupies the far plane — environment and context behind the subject."
+              },
+              relationalStaging: {
+                type: Type.STRING,
+                description: "How characters occupy the frame together when two or more share this panel: distance between them, who faces whom, who is responding and who is not. Never describe them as independent figures who merely share a background. Leave empty for solo panels."
+              },
+              directAddress: {
+                type: Type.BOOLEAN,
+                description: "True only for a rare, high-impact beat of a character looking directly at the reader. Defaults to false; do not set true for ordinary character-facing-camera framing."
+              },
               dialogueIndices: { 
                 type: Type.ARRAY, 
                 items: { type: Type.INTEGER },
@@ -666,6 +686,18 @@ export function buildSchemas(show?: Show) {
                     facing: {
                       type: Type.STRING,
                       enum: ['left', 'right', 'forward', 'away', 'up', 'down'],
+                    },
+                    bodyLanguage: {
+                      type: Type.STRING,
+                      description: "This character's posture and physical bearing in this panel."
+                    },
+                    facialExpression: {
+                      type: Type.STRING,
+                      description: "This character's facial expression in this panel."
+                    },
+                    inResponseTo: {
+                      type: Type.STRING,
+                      description: "What this character is reacting to in this panel — another character's line or action, or the moment itself if solo."
                     },
                   },
                   required: ['characterHandle', 'zone', 'depth'],
