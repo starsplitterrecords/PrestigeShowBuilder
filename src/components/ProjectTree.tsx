@@ -59,8 +59,7 @@ const ProjectTree: React.FC = () => {
           {([
             { view: "psb4",           label: "Story Pipeline" },
             { view: "visual-planning", label: "Visual Planner" },
-            { view: "workbench_v2",   label: "Scene Workbench V2" },
-            { view: "workbench",      label: "Scene Workbench (Legacy)" },
+            { view: "workbench",      label: "Scene Workbench" },
             { view: "issue-compiler", label: "Issue Compiler" },
           ] as const).map(item => (
             <button key={item.view}

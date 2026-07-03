@@ -5,7 +5,7 @@
 // is shown is what gets sent. Also surfaces the reference manifest, a copy
 // button, a continuity toggle, and the preflight verdict.
  
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Show } from '../../types/show';
 import { PageBeat, ProductionPage, ImageVersion } from '../../types/production';
 import { buildPagePromptPreview, PagePromptPreview } from '../../ai/imageGeneration/finalPagePromptPreview';
@@ -34,6 +34,12 @@ export function WorkbenchPromptPanel({
   const [copied, setCopied] = useState(false);
   const [rawPrompt, setRawPrompt] = useState('');
   const [isGeneratingRaw, setIsGeneratingRaw] = useState(false);
+
+  // Reset to live view whenever the focused page changes so stale "This image"
+  // mode from a previous page doesn't carry over and show the wrong prompt.
+  useEffect(() => {
+    setMode('live');
+  }, [pageBeat.uid]);
  
   const characterNames = useMemo(() => {
     const res = resolveCanonicalCharacters(show, pageBeat.characterIds ?? []);

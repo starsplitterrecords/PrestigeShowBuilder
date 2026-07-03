@@ -12,7 +12,6 @@ import TeleplaysPanel from './TeleplaysPanel';
 import ExportPanel from './ExportPanel';
 import GenerationLogPanel from './GenerationLogPanel';
 import SceneWorkbench from './SceneWorkbench';
-import SceneWorkbenchV2 from './SceneWorkbenchV2';
 import ConsolePanel from './ConsolePanel';
 import Psb4Panel from '../psb4/ui/Psb4Panel';
 import VisualPlanningPanel from './VisualPlanningPanel';
@@ -51,7 +50,6 @@ const WorkspaceRouter: React.FC = () => {
     case 'issue-compiler': return <IssueCompilerPanel />;
     case 'production-audit': return <ProductionAuditPanel />;
     case 'workbench': return <SceneWorkbench />;
-    case 'workbench_v2': return <SceneWorkbenchV2 />;
     case 'visual-planning': return <VisualPlanningPanel />;
     case 'psb4-replay': return <ConsolePanel />;
     case 'psb4': return <Psb4Panel />;

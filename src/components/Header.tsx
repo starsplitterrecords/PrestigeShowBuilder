@@ -108,20 +108,20 @@ const Header: React.FC = () => {
 
         <button
           onClick={() => {
-            if (state.view === 'workbench_v2') {
+            if (state.view === 'workbench') {
               dispatch({ type: 'SET_VIEW', view: 'dashboard' });
             } else {
-              dispatch({ type: 'SET_VIEW', view: 'workbench_v2' });
+              dispatch({ type: 'SET_VIEW', view: 'workbench' });
             }
           }}
           className={`px-3 py-1.5 border rounded-sm text-[10px] font-black uppercase tracking-widest transition-all ${
-            state.view === 'workbench_v2'
+            state.view === 'workbench'
               ? 'bg-amber-500/15 border-amber-500/30 text-amber-400 hover:bg-amber-500/25 text-amber-300'
               : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
           }`}
-          title={state.view === 'workbench_v2' ? "Switch to standard dashboard and legacy panels" : "Switch to Scene Workbench V2 full-screen view"}
+          title={state.view === 'workbench' ? "Switch to standard dashboard and legacy panels" : "Switch to Scene Workbench full-screen view"}
         >
-          {state.view === 'workbench_v2' ? 'LEGACY: PANELS' : 'Scene Workbench V2'}
+          {state.view === 'workbench' ? 'LEGACY: PANELS' : 'Scene Workbench'}
         </button>
       </div>
 

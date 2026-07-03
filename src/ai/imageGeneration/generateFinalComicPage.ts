@@ -159,6 +159,10 @@ export const generateFinalComicPage = async (
       },
       metadata: {
         prompt: compositePrompt,
+        // fullTextPrompt is the complete string as sent: composite + style header.
+        // The WorkbenchPromptPanel "This image" tab reads this first so it shows
+        // exactly what the model received, not just the composite section.
+        fullTextPrompt: [compositePrompt, styleHeader].filter(Boolean).join('\n\n'),
         model: modelName,                 // requested alias
         servedModelVersion,               // what Google actually served (drift signal)
         responseId,                       // correlate to a specific API response

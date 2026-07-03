@@ -22,7 +22,6 @@ export type WorkspaceView =
   | 'export'
   | 'generation-log'
   | 'workbench'
-  | 'workbench_v2'
   | 'psb4-replay'
   | 'psb4'
   | 'production-audit'
@@ -30,7 +29,6 @@ export type WorkspaceView =
 
 export const FULLSCREEN_VIEWS: readonly WorkspaceView[] = [
   'workbench',
-  'workbench_v2',
   'characters',
   'issue-compiler',
   'teleplay',
@@ -41,7 +39,6 @@ export const FULLSCREEN_VIEWS: readonly WorkspaceView[] = [
 
 export const HIDE_BREADCRUMB_VIEWS: readonly WorkspaceView[] = [
   'workbench',
-  'workbench_v2',
   'psb4-replay'
 ];
 
