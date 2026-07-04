@@ -6,7 +6,7 @@
 import { Show } from '../../types/show';
 
 export const DEFAULT_LETTERING_STYLE =
-  'Professional comic-book lettering conventions. Use consistent balloon shape, stroke weight, tail style, font weight, caption styling, and joined-balloon treatment across every page of this comic. Speech balloons are white with thin black borders, slightly irregular oval shapes, professional bold all-caps comic lettering, balanced line breaks, smooth tails aimed at speaker mouths, and fully legible text. Use clean bridge connectors only for joined balloons from the same speaker.';
+  'Professional comic-book hand lettering conventions. Use consistent balloon shape, stroke weight, tail style, font weight, caption styling, and joined-balloon treatment across every page of this comic. Speech balloons are white with thin black borders, slightly irregular oval shapes, professional bold all-caps comic hand lettering, balanced line breaks, smooth tails aimed at speaker mouths, and fully legible text. Use clean bridge connectors only for joined balloons from the same speaker.';
 
 export function sanitizeNegativePromptForFinalComicPage(
   negativePrompt: string,

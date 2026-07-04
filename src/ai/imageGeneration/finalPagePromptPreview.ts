@@ -233,6 +233,8 @@ export function buildCompositePrompt(contract: FinalPageBeat, settingNote?: stri
     : '— Characters face and engage each other and the scene, not the reader.';
 
   return [
+    'PAINTED COMIC PAGE.',
+    '',
     charactersBlock,
     charactersBlock ? '' : null,
     settingNote || null,
