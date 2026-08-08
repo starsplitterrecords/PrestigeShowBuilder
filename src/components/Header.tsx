@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../StoreContext';
 import { DataCleanupModal } from './DataCleanupModal';
+import PcbExportButton from './PcbExportButton';
 import { Database, Save, Check, ChevronLeft, Home, FolderTree } from 'lucide-react';
 import { FULLSCREEN_VIEWS } from '../types/models';
 
@@ -94,6 +95,8 @@ const Header: React.FC = () => {
           <FolderTree className="w-3.5 h-3.5" />
           <span>{state.forceShowTree ? "Hide Tree" : "Show Tree"}</span>
         </button>
+
+        <PcbExportButton show={currentShow} />
 
         <button
           onClick={() => setIsCleanupOpen(true)}
