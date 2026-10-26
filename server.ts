@@ -1,4 +1,5 @@
 import express from "express";
+import { timingSafeEqual } from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
@@ -16,6 +17,7 @@ const __dirname = path.dirname(__filename);
  */
 async function startServer() {
   const app = express();
+  app.disable("x-powered-by");
   const PORT = Number(process.env.PORT) || 3000;
 
   /**
@@ -46,10 +48,12 @@ async function startServer() {
    * Simple API route to safely check environment key presence.
    * Exposes the status of required environment keys without leaking secrets in logs or responses.
    */
-  app.get("/api/config", (req, res) => {
+  app.get("/api/config", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    // Readiness flags only: never return credentials to a browser.
     res.json({
-      GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
-      API_KEY: process.env.API_KEY || "",
+      GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY),
+      API_KEY: Boolean(process.env.API_KEY),
     });
   });
 
@@ -64,25 +68,34 @@ async function startServer() {
    * Major capability: MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API
    */
   app.all("/gemini-api-proxy/*all", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    // Fail closed: only authorized server-to-server callers may spend the
+    // application's Gemini API allocation. Do not distribute this secret in
+    // frontend code, HTML, client storage, or browser configuration.
+    const proxyAccessToken = process.env.GEMINI_PROXY_ACCESS_TOKEN || "";
+    if (proxyAccessToken.length < 32) {
+      return res.status(503).json({ error: "Gemini proxy is disabled until server authentication is configured." });
+    }
+    const bearer = /^Bearer (.+)$/i.exec(req.headers.authorization || "")?.[1] || "";
+    const expected = Buffer.from(proxyAccessToken);
+    const provided = Buffer.from(bearer);
+    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
     const apiPath = req.params.all || req.path.replace("/gemini-api-proxy/", "");
     const query = { ...req.query };
 
     // Remove the custom proxy flag from the upstream query object
     delete query.__applet_proxy;
+    delete query.key;
 
     // Prioritize server-side key in Cloud Run environment to ensure reliability.
     // API_KEY is the security key injected after model/user authorization in AI Studio settings.
     const serverKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
     console.log(`[Proxy] Request to ${apiPath}. Server key present: ${!!serverKey}`);
 
-    if (serverKey) {
-      query.key = serverKey;
-    } else if (!query.key && !req.headers["x-goog-api-key"]) {
-      console.error("[Proxy] No API key found in environment variables or request!");
-      return res.status(401).json({
-        error: "API Key missing",
-        message: "Please set API_KEY or GEMINI_API_KEY in your Cloud Run environment variables, or provide a key in the request."
-      });
+    if (!serverKey) {
+      return res.status(503).json({ error: "Gemini service is not configured." });
     }
 
     const queryString = new URLSearchParams(query as any).toString();
@@ -96,7 +109,7 @@ async function startServer() {
         headers: {
           "Content-Type": "application/json",
           "x-goog-api-client": (req.headers["x-goog-api-client"] as string) || "genai-js",
-          "x-goog-api-key": serverKey || (req.headers["x-goog-api-key"] as string) || (query.key as string) || "",
+          "x-goog-api-key": serverKey,
         },
       };
 
@@ -106,8 +119,7 @@ async function startServer() {
         "x-goog-api-client",
         "x-goog-request-params",
         "user-agent",
-        "accept",
-        "authorization"
+        "accept"
       ];
 
       for (const header of headersToForward) {
